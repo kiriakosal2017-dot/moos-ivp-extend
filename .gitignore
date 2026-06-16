@@ -58,3 +58,9 @@ lib/
 # Temp files (emacs, etc)
 *#
 *~
+
+# Editor backup files
+*.save
+
+# macOS
+.DS_Store

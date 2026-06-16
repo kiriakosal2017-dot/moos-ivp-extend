@@ -1,0 +1,85 @@
+//--------    FILE: alpha.bhv   -------------
+// Exercise 5 - Station Keeping at Waypoints
+//   The vehicle surveys, but station-keeps each time it reaches a
+//   waypoint. The Waypoint behavior's wptflag turns itself off
+//   (STATION=true) at each waypoint and turns the StationKeep behavior
+//   on. Re-clicking DEPLOY in pMarineViewer pokes STATION=false to
+//   resume the survey.
+
+initialize   DEPLOY  = false
+initialize   RETURN  = false
+initialize   STATION = false
+
+//----------------------------------------------
+// Survey behavior. At each waypoint, wptflag posts STATION=true:
+//   - its own condition (STATION=false) is no longer satisfied -> idle
+//   - the StationKeep behavior's condition (STATION=true) is satisfied
+Behavior = BHV_Waypoint
+{
+  name      = waypt_survey
+  pwt       = 100
+  condition = RETURN  = false
+  condition = DEPLOY  = true
+  condition = STATION = false
+  endflag   = RETURN  = true
+
+  wptflag   = STATION = true
+
+  updates   = WPT_UPDATE
+  perpetual = true
+
+           speed = 3   // meters per second
+    capture_line = true
+  capture_radius = 5.0
+     slip_radius = 15.0
+         polygon = 60,-40 : 60,-160 : 150,-160 : 180,-100 : 150,-40
+           order = normal
+          repeat = 0
+
+    visual_hints = nextpt_color=yellow
+    visual_hints = nextpt_vertex_size=8
+    visual_hints = nextpt_lcolor=gray70
+    visual_hints = vertex_color=dodger_blue, edge_color=white
+    visual_hints = vertex_size=5, edge_size=1
+}
+
+//----------------------------------------------
+// Station-keeps at the position where it becomes active (the waypoint
+// just reached). Turned on by the survey's wptflag, turned off when
+// the user re-clicks DEPLOY (STATION=false).
+Behavior = BHV_StationKeep
+{
+  name      = station-keep
+  pwt       = 100
+  condition = STATION = true
+  condition = DEPLOY  = true
+  perpetual = true
+
+  center_activate = true
+     inner_radius = 4
+     outer_radius = 15
+      outer_speed = 1.2
+    transit_speed = 2.5
+       swing_time = 4
+
+     visual_hints = vertex_size=0, edge_color=light_blue
+}
+
+//----------------------------------------------
+Behavior = BHV_Waypoint
+{
+  name      = waypt_return
+  pwt       = 100
+  condition = RETURN = true
+  condition = DEPLOY = true
+  perpetual = true
+  updates   = RETURN_UPDATE
+  endflag   = RETURN = false
+  endflag   = DEPLOY = false
+  endflag   = MISSION = complete
+
+           speed = 2.0
+  capture_radius = 2.0
+     slip_radius = 8.0
+          points = 0,-20
+}

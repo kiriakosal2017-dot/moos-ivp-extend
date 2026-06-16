@@ -1,0 +1,89 @@
+//--------    FILE: alpha.bhv   -------------
+// Exercise 4 - Integrate the iSay App to Behavior Events
+//   Same east->west->return chain as s2_alpha, but each survey also
+//   posts a SAY_MOOS endflag so iSay plays an audio cue on completion:
+//     east survey done -> shipbell.wav
+//     west survey done -> buzzer.wav
+
+initialize   DEPLOY = false
+initialize   RETURN = false
+initialize   REGION = east
+
+//----------------------------------------------
+// East survey: on completion flip to west AND ring the ship bell.
+Behavior = BHV_Waypoint
+{
+  name      = east_wpt_survey
+  pwt       = 100
+  condition = RETURN = false
+  condition = DEPLOY = true
+  condition = REGION = east
+  endflag   = REGION = west
+  endflag   = SAY_MOOS = file=shipbell.wav
+
+  updates   = WPT_UPDATE
+  perpetual = true
+
+           speed = 3   // meters per second
+    capture_line = true
+  capture_radius = 5.0
+     slip_radius = 15.0
+          points = 60,-40 : 60,-160 : 150,-160 : 180,-100 : 150,-40
+           order = normal
+          repeat = 0
+
+    visual_hints = nextpt_color=yellow
+    visual_hints = nextpt_vertex_size=8
+    visual_hints = nextpt_lcolor=gray70
+    visual_hints = vertex_color=dodger_blue, edge_color=white
+    visual_hints = vertex_size=5, edge_size=1
+}
+
+//----------------------------------------------
+// West survey: on completion trigger return AND sound the buzzer.
+Behavior = BHV_Waypoint
+{
+  name      = west_wpt_survey
+  pwt       = 100
+  condition = RETURN = false
+  condition = DEPLOY = true
+  condition = REGION = west
+  endflag   = RETURN = true
+  endflag   = SAY_MOOS = file=buzzer.wav
+
+  updates   = WPT_UPDATE2
+  perpetual = true
+
+           speed = 3   // meters per second
+    capture_line = true
+  capture_radius = 5.0
+     slip_radius = 15.0
+          points = -35,-65 : -35,-125 : 20,-125 : 20,-65
+           order = normal
+          repeat = 0
+
+    visual_hints = nextpt_color=yellow
+    visual_hints = nextpt_vertex_size=8
+    visual_hints = nextpt_lcolor=gray70
+    visual_hints = vertex_color=dodger_blue, edge_color=white
+    visual_hints = vertex_size=5, edge_size=1
+}
+
+//----------------------------------------------
+Behavior = BHV_Waypoint
+{
+  name      = waypt_return
+  pwt       = 100
+  condition = RETURN = true
+  condition = DEPLOY = true
+  perpetual = true
+  updates   = RETURN_UPDATE
+  endflag   = RETURN = false
+  endflag   = DEPLOY = false
+  endflag   = MISSION = complete
+
+           speed = 2.0
+  capture_radius = 2.0
+     slip_radius = 8.0
+          points = 0,-20
+}
