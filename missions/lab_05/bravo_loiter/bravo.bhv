@@ -2,7 +2,6 @@
 
 initialize   DEPLOY = false
 initialize   RETURN = false
-initialize   REGION = east
 
 //----------------------------------------------
 //
@@ -10,36 +9,46 @@ initialize   REGION = east
  {
    // General Behavior Parameters
    // ---------------------------
-   name         = transit               // example
+   name         = loiter               // example
    pwt          = 100                   // default
-   condition    = MODE==LOITERING       // example
+   condition    = DEPLOY = true
+   condition    = RETURN = false
    updates      = LOITER_UPDATES        // example
+   duration     = 150
+   endflag      = RETURN = true
 
    // Parameters specific to this behavior
    // ------------------------------------
-        acquire_dist = 10               // default
-      capture_radius = 3                // default  
-     center_activate = false            // default
-           clockwise = true             // default
-         slip_radius = 15               // default
-               speed = 2.5               // default
-       spiral_factor = -2               // default
+    acquire_dist = 10               // default
+    capture_radius = 3                // default  
+    center_activate = false            // default
+    clockwise = false             // default
+    slip_radius = 15               // default
+    speed = 2.5               // default
+    spiral_factor = -2               // default
 
-             polygon = radial:: x=5,y=8,radius=30,pts=8  // example
-         post_suffix = HENRY                             // example
+    polygon = radial:: x=100, y=-75, radius=30, pts=8
 
-       center_assign = 40,50            // example
-      xcenter_assign = 40               // example
-      ycenter_assign = 50               // example
-
-
-        visual_hints = vertex_size  = 1             // default
-        visual_hints = edge_size    = 1             // default
-        visual_hints = vertex_color = dodger_blue   // default
-        visual_hints = edge_color   = white         // default
-        visual_hints = nextpt_color = yellow        // default
-        visual_hints = nextpt_lcolor = aqua         // default
-        visual_hints = nextpt_vertex_size = 5       // default
-        visual_hints = label        = zone3         // example
+    visual_hints = vertex_size  = 1             // default
+    visual_hints = edge_size    = 1             // default
+    visual_hints = vertex_color = dodger_blue   // default
+    visual_hints = edge_color   = white         // default
  }
 
+   // ------------------------------------
+   Behavior = BHV_Waypoint
+  {
+    name      = waypt_return
+    pwt       = 100
+    condition = RETURN = true
+    condition = DEPLOY = true
+    perpetual = true
+    updates   = RETURN_UPDATE
+    endflag   = RETURN = false
+    endflag   = DEPLOY = false
+    
+    speed = 2.0
+    capture_radius = 2.0
+    slip_radius = 8.0
+    points = 0,0
+  }    
