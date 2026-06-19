@@ -1,0 +1,22 @@
+//--------------------------------------------------------
+// FILE: plug_uTimerScript.moos
+// uTimerScript Configuration Block — generates 100 random VISIT_POINTs
+//--------------------------------------------------------
+
+  ProcessConfig = uTimerScript
+  {
+    AppTick   = 4
+    CommsTick = 4
+
+    paused     = true       // ξεκινά παγωμένο — το pPointAssign το ξυπνάει (handshake)
+    pause_var  = UTS_PAUSE   // η μεταβλητή που το ξεπαγώνει (UTS_PAUSE=false)
+    reset_max  = 0          // ένα πέρασμα, χωρίς reset
+    reset_time = none
+
+    randvar = varname=X, min=-25,  max=200, key=at_post   // φρέσκο X σε ΚΑΘΕ post
+    randvar = varname=Y, min=-175, max=-25, key=at_post   // φρέσκο Y σε ΚΑΘΕ post
+
+    event = var=VISIT_POINT, val="firstpoint",                time=0
+    event = var=VISIT_POINT, val="x=$[X], y=$[Y], id=$[IDX]", time=0, amt=100
+    event = var=VISIT_POINT, val="lastpoint",                 time=1
+  }

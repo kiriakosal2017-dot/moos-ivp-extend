@@ -1,0 +1,13 @@
+//---------------------------------------------------------
+// pPointAssign Config Block 
+
+ProcessConfig = pPointAssign
+{
+  AppTick   = 4
+  CommsTick = 4
+
+  vname = gilda
+  vname = henry
+  assign_by_region = false
+}
+
