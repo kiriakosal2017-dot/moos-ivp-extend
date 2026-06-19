@@ -186,9 +186,16 @@ bool GenRescue::handleMailFoundSwimmer(string str)
 
   int id = (int)(id_d);
   if(m_swimmers.count(id)) {
-    m_swimmers.erase(id);   // drop the rescued swimmer from the tour
+    m_swimmers.erase(id);   // drop the rescued swimmer from bookkeeping
     m_rescued_count++;
-    m_plan_pending = true;  // re-plan over the remaining swimmers
+    // NOTE: deliberately do NOT re-plan here. Re-posting SURVEY_UPDATE resets
+    // BHV_Waypoint's index to vertex 0 (the bottom lane), so re-planning on
+    // every rescue kept yanking the boat back to the bottom -- it yo-yo'd in
+    // the lower lanes and never reached the top-edge swimmers (all 5 misses on
+    // athens_02 had y in [-10,-2], the LAST lane). One uninterrupted snake from
+    // bottom to top fits easily in the time budget (~500m path vs 1.2 m/s x
+    // ~1140s). Keeping the erase (above) lets m_swimmers empty out when all are
+    // rescued, which releases the RETURN guard so the boat heads home cleanly.
   }
   return(true);
 }
