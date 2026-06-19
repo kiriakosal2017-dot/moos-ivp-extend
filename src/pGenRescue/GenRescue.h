@@ -44,7 +44,23 @@ class GenRescue : public AppCastingMOOSApp
   double     m_nav_x;
   double     m_nav_y;
   bool       m_nav_x_set;
-  bool       m_nav_y_set;    
+  bool       m_nav_y_set;
+
+  // Swimmer-aware state: real swimmer positions keyed by id.
+  // Re-broadcast SWIMMER_ALERTs overwrite the same key (auto-dedupe);
+  // a RESCUED/FOUND swimmer is erased. m_plan_pending forces a re-plan
+  // whenever this set changes.
+  std::map<int, XYPoint> m_swimmers;
+  bool                   m_plan_pending;
+  unsigned int           m_rescued_count;
+
+  // Periodic re-plan throttle. We re-issue the survey path every
+  // m_replan_interval game-seconds while swimmers remain so the
+  // BHV_Waypoint list never runs out (which fired endflag RETURN=true and
+  // parked the vehicle early). m_last_plan_time is the game-time of the
+  // last SURVEY_UPDATE we posted.
+  double                 m_last_plan_time;
+  double                 m_replan_interval;
 };
 
 #endif 

@@ -6,6 +6,9 @@
 /************************************************************/
 
 #include <iterator>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 #include "GenRescue.h"
 #include "MBUtils.h"
 #include "ColorParse.h"
@@ -28,6 +31,12 @@ GenRescue::GenRescue()
   m_nav_y = 0;
   m_nav_x_set = 0;
   m_nav_y_set = 0;
+
+  m_plan_pending  = false;
+  m_rescued_count = 0;
+
+  m_last_plan_time  = 0;
+  m_replan_interval = 15;   // game-seconds between forced re-plans
 }
 
 //---------------------------------------------------------
@@ -82,9 +91,22 @@ bool GenRescue::OnConnectToServer()
 bool GenRescue::Iterate()
 {
   AppCastingMOOSApp::Iterate();
-  
-  //if(m_plan_pending)
-  if((m_iteration % 20) == 0)
+
+  // While swimmers remain, keep the vehicle in SURVEYING. When the survey
+  // path completes, BHV_Waypoint fires endflag RETURN=true; forcing RETURN
+  // back to false toggles MODE out of and back into SURVEYING, which re-
+  // initialises waypt_survey from point 0 -- i.e. it RE-RUNS the snake path,
+  // re-attempting any swimmer slipped past (slip_radius 8m > rescue 5m) on
+  // the previous loop. This is our "repeat" mechanism.
+  bool have_nav = m_nav_x_set && m_nav_y_set;
+  if(!m_swimmers.empty())
+    Notify("RETURN", "false");
+
+  // Re-plan only when the swimmer set changed (new alert or a rescue). The
+  // path is a fixed snake, so we must NOT re-post periodically -- updating
+  // points resets the behaviour to vertex 0, which at a 15s cadence would
+  // restart the boat before it gets anywhere.
+  if(have_nav && m_plan_pending)
     postShortestPath();
 
   AppCastingMOOSApp::PostReport();
@@ -122,6 +144,11 @@ void GenRescue::RegisterVariables()
   AppCastingMOOSApp::RegisterVariables();
   Register("SWIMMER_ALERT", 0);
   Register("FOUND_SWIMMER", 0);
+  // Ownship position: without these, m_nav_*_set never becomes true and
+  // postShortestPath() never runs -- the swimmer-aware path is never posted
+  // and the vehicle silently falls back to the .bhv default waypoints.
+  Register("NAV_X", 0);
+  Register("NAV_Y", 0);
 }
 
 
@@ -130,6 +157,20 @@ void GenRescue::RegisterVariables()
 
 bool GenRescue::handleMailNewSwimmer(string str)
 {
+  // str example: "x=34, y=85, id=21"
+  double x, y, id_d;
+  bool ok_x  = tokParse(str, "x",  ',', '=', x);
+  bool ok_y  = tokParse(str, "y",  ',', '=', y);
+  bool ok_id = tokParse(str, "id", ',', '=', id_d);
+  if(!ok_x || !ok_y || !ok_id)
+    return(false);
+
+  int id = (int)(id_d);
+  // A brand-new swimmer id means the tour must be re-planned.
+  // (Re-broadcasts of a known id just refresh its position.)
+  if(m_swimmers.count(id) == 0)
+    m_plan_pending = true;
+  m_swimmers[id] = XYPoint(x, y);
   return(true);
 }
 
@@ -138,6 +179,17 @@ bool GenRescue::handleMailNewSwimmer(string str)
 
 bool GenRescue::handleMailFoundSwimmer(string str)
 {
+  // str example: "id=21, finder=abe"
+  double id_d;
+  if(!tokParse(str, "id", ',', '=', id_d))
+    return(false);
+
+  int id = (int)(id_d);
+  if(m_swimmers.count(id)) {
+    m_swimmers.erase(id);   // drop the rescued swimmer from the tour
+    m_rescued_count++;
+    m_plan_pending = true;  // re-plan over the remaining swimmers
+  }
   return(true);
 }
 
@@ -146,44 +198,59 @@ bool GenRescue::handleMailFoundSwimmer(string str)
 
 void GenRescue::postShortestPath()
 {
-  // If path has not been set, determine a random path of 9
-  // points, and make a greedy path from ownship start position.
-  // Once it has been set, don't change it. But keep posting it
-  // once every 20 iterations.
-  
-  if(m_path.size() == 0) {
-    XYFieldGenerator generator;
-    generator.addPolygon("-184,-5:-188, -14:-130,-44:-106,-3");
-    generator.addPolygon("-85,-3:-89,-8:-51,-1");
-    generator.addPolygon("-78,-74:-54,-32:-104,-53");
-    generator.setBufferDist(7);
-    generator.setMaxTries(1000);
-    generator.generatePoints(9);
-    
-    vector<XYPoint> pts = generator.getPoints();
-    
-    for(unsigned int i=0; i<pts.size(); i++) {
-      XYPoint pt = pts[i];
-      m_path.add_vertex(pt.x(), pt.y());
-    }
-    // Seglist needs a name, refer when drawging and erasing
-    m_path.set_label("one");    
-    XYSegList segl;
-    segl.add_vertex(m_nav_x, m_nav_y);
+  // Build a path through the known, still-unrescued swimmers, ordered
+  // greedily (nearest-neighbour) starting from ownship's position.
+  if(!m_nav_x_set || !m_nav_y_set)
+    return;
 
-    m_path = greedyPath(m_path, m_nav_x, m_nav_y);
-    
-    // Seglist needs a name, refer when drawging and erasing
-    segl.set_label("one");
+  // No swimmers left -> stop surveying.
+  if(m_swimmers.empty()) {
+    postNullPath();
+    m_plan_pending = false;
+    return;
   }
-  
-  Notify("VIEW_SEGLIST", m_path.get_spec());
+
+  // Collect the current swimmer positions...
+  std::vector<XYPoint> pts;
+  std::map<int, XYPoint>::iterator p;
+  double ymin = 0;
+  bool   first = true;
+  for(p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+    pts.push_back(p->second);
+    if(first || (p->second.y() < ymin)) { ymin = p->second.y(); first = false; }
+  }
+
+  // ...and order them as a boustrophedon (snake) scan: bin into horizontal
+  // lanes ~2*rescue_range tall, sweep +x along even lanes and -x along odd
+  // ones. Gentle, sweep-like turns keep the boat from corner-cutting and
+  // slipping past swimmers (slip_radius 8m > rescue range 5m) the way a
+  // jagged nearest-neighbour tour does -- while every vertex still sits on
+  // a real swimmer.
+  double lane_h = 10.0;
+  std::sort(pts.begin(), pts.end(),
+    [&](const XYPoint &a, const XYPoint &b) {
+      int la = (int)floor((a.y() - ymin) / lane_h);
+      int lb = (int)floor((b.y() - ymin) / lane_h);
+      if(la != lb) return la < lb;
+      return (la % 2 == 0) ? (a.x() < b.x()) : (a.x() > b.x());
+    });
+
+  XYSegList path;
+  for(size_t i = 0; i < pts.size(); i++)
+    path.add_vertex(pts[i].x(), pts[i].y());
+  m_path = path;
+  m_path.set_label("one");
+
+  Notify("VIEW_SEGLIST", m_path.get_spec());   // show the full planned tour
 
   string update_var = "SURVEY_UPDATE";
   string update_str = "points = " + m_path.get_spec_pts();
 
   Notify(update_var, update_str);
   reportEvent("SURVEY_UPDATE=" + update_str);
+
+  m_plan_pending  = false;
+  m_last_plan_time = m_curr_time;
 }
 
 //---------------------------------------------------------
@@ -194,25 +261,19 @@ void GenRescue::postShortestPath()
 
 void GenRescue::postNullPath()
 {
-#if 0
+  // All known swimmers rescued: post a single-point "path" at ownship's
+  // current position so the survey behaviour has nothing left to chase.
   if(!m_nav_x_set || !m_nav_y_set)
     return;
-  if(m_map_pts.size() != 0)
-    return;
-  
+
   XYSegList segl;
   segl.add_vertex(m_nav_x, m_nav_y);
-  
-  // Seglist needs a name, refer when drawging and erasing
   segl.set_label("one");
   Notify("VIEW_SEGLIST", segl.get_spec());
 
-  string update_var = "SURVEY_UPDATE";
   string update_str = "points = " + segl.get_spec_pts();
-
-  Notify(update_var, update_str);
-  reportEvent("SURVEY_UPDATE=" + update_str);
-#endif
+  Notify("SURVEY_UPDATE", update_str);
+  reportEvent("SURVEY_UPDATE=" + update_str + " (all rescued)");
 }
 
 
@@ -221,5 +282,9 @@ void GenRescue::postNullPath()
 
 bool GenRescue::buildReport()
 {
+  m_msgs << "Swimmers known (unrescued): " << m_swimmers.size() << endl;
+  m_msgs << "Swimmers rescued:           " << m_rescued_count   << endl;
+  m_msgs << "Planned path waypoints:     " << m_path.size()     << endl;
+  m_msgs << "Re-plan pending:            " << (m_plan_pending ? "yes" : "no") << endl;
   return(true);
 }
