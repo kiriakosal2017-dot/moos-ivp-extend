@@ -31,6 +31,7 @@ class GenPath : public AppCastingMOOSApp
  protected:
    void registerVariables();
    void generatePath();
+   unsigned int unvisitedCount();
 
  private: // Configuration variables
   std::string          m_update_var;      // η MOOS μεταβλητή που ενημερώνει το waypoint behavior
@@ -40,7 +41,9 @@ class GenPath : public AppCastingMOOSApp
   std::vector<XYPoint> m_points;          // τα σημεία που μαζέψαμε
   std::vector<bool>    m_visited;         // ποιά έχουν επισκεφθεί (παράλληλο στο m_points)
   unsigned int         m_invalid_points;  // σημεία που δεν διαβάστηκαν σωστά
-  bool                 m_path_generated;  // φτιάξαμε ήδη τη διαδρομή;
+  bool                 m_path_generated;  // φτιάξαμε ήδη την ΠΡΩΤΗ διαδρομή;
+  unsigned int         m_tours_done;      // πόσες περιηγήσεις φτιάξαμε
+  unsigned int         m_prev_unvisited;  // χαμένα στην προηγούμενη περιήγηση (no-progress check)
   bool                 m_first_received;
   bool                 m_last_received;
   double               m_nav_x;           // τρέχουσα θέση του καραβιού

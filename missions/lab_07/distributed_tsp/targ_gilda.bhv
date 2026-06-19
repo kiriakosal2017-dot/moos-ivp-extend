@@ -53,6 +53,7 @@ Behavior = BHV_Waypoint
   perpetual = true
 
   updates   = WPT_UPDATE      // το pGenPath στέλνει εδώ τη διαδρομή
+  endflag   = TOUR_DONE = true // πυροδοτείται όταν τελειώσει η περιήγηση
 
           speed = 1.2         // περιορισμός lab: max 1.2 m/s
  capture_radius = 3           // επίσκεψη OK εντός 3m
@@ -76,7 +77,7 @@ Behavior = BHV_Waypoint
   endflag   = STATION_KEEP = true
   perpetual = true
 
-      speed = 1.3
+      speed = 1.2
      radius = 3.0
   nm_radius = 15.0
      points = 0,0
@@ -93,7 +94,7 @@ Behavior = BHV_Waypoint
   endflag   = REFUEL_KEEP = true
   perpetual = true
 
-      speed = 1.3
+      speed = 1.2
      radius = 3.0
   nm_radius = 15.0
      points = 0,0
@@ -112,7 +113,7 @@ Behavior = BHV_StationKeep
       inner_radius = 5
       outer_radius = 10 
        outer_speed = 1.0
-     transit_speed = 1.3
+     transit_speed = 1.2
         swing_time = 7
       visual_hints = vertex_size=0, edge_color=gray50
 }

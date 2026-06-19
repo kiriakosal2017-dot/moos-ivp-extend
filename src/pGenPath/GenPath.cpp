@@ -27,6 +27,8 @@ GenPath::GenPath()
   m_visit_radius   = 3;
   m_invalid_points = 0;
   m_path_generated = false;
+  m_tours_done     = 0;
+  m_prev_unvisited = 0;
 }
 
 //---------------------------------------------------------
@@ -74,6 +76,22 @@ bool GenPath::OnNewMail(MOOSMSG_LIST &NewMail)
     else if(key == "NAV_Y")
       m_nav_y = msg.GetDouble();
 
+    else if(key == "TOUR_DONE") {
+      // Το waypoint behavior τελείωσε μια περιήγηση. Δες τι έμεινε.
+      if(m_path_generated) {                 // αγνόησε spurious completions πριν τον 1ο tour
+        unsigned int remaining = unvisitedCount();
+        if(remaining == 0)
+          Notify("RETURN", "true");          // όλα επισκέφθηκαν -> σπίτι
+        else if(remaining < m_prev_unvisited) {
+          m_prev_unvisited = remaining;      // υπάρχει πρόοδος -> ξανά, μόνο τα χαμένα
+          m_tours_done++;
+          generatePath();
+        }
+        else
+          Notify("RETURN", "true");          // καμία πρόοδος -> σταμάτα, σπίτι
+      }
+    }
+
     else if(key != "APPCAST_REQ")
       reportRunWarning("Unhandled Mail: " + key);
    }
@@ -99,8 +117,12 @@ bool GenPath::Iterate()
   AppCastingMOOSApp::Iterate();
 
   // Όταν έχουμε ΟΛΑ τα σημεία + ξέρουμε τη θέση μας, φτιάξε διαδρομή (μία φορά)
-  if(!m_path_generated && m_last_received && m_nav_received && (m_points.size() > 0))
+  if(!m_path_generated && m_last_received && m_nav_received && (m_points.size() > 0)) {
     generatePath();
+    m_path_generated = true;
+    m_prev_unvisited = unvisitedCount();   // = όλα τα σημεία (πρώτο tour)
+    m_tours_done     = 1;
+  }
 
   // Σημείωσε ως "visited" όποιο σημείο είναι εντός visit_radius από το καράβι
   if(m_nav_received) {
@@ -166,6 +188,7 @@ void GenPath::registerVariables()
   Register("VISIT_POINT", 0);
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
+  Register("TOUR_DONE", 0);
 }
 
 //------------------------------------------------------------
@@ -177,8 +200,11 @@ void GenPath::generatePath()
 {
   XYSegList seglist;
 
-  // αντίγραφο των σημείων που θα "καταναλώνουμε" καθώς τα επιλέγουμε
-  vector<XYPoint> remaining = m_points;
+  // ΜΟΝΟ τα μη-επισκεφθέντα σημεία (1ο tour = όλα, επόμενα = τα χαμένα)
+  vector<XYPoint> remaining;
+  for(unsigned int i=0; i<m_points.size(); i++)
+    if(!m_visited[i])
+      remaining.push_back(m_points[i]);
 
   // το "τρέχον" σημείο ξεκινά από τη θέση του καραβιού
   double cx = m_nav_x;
@@ -206,10 +232,22 @@ void GenPath::generatePath()
     remaining.erase(remaining.begin() + best_i);
   }
 
-  // στείλε τη διαδρομή στο waypoint behavior
-  string update = "points=" + seglist.get_spec();
-  Notify(m_update_var, update);
-  m_path_generated = true;
+  // στείλε τη διαδρομή στο waypoint behavior (αν υπάρχει κάτι)
+  if(seglist.size() > 0)
+    Notify(m_update_var, "points=" + seglist.get_spec());
+}
+
+//------------------------------------------------------------
+// Procedure: unvisitedCount()
+//   Πόσα σημεία δεν έχουν επισκεφθεί ακόμα.
+
+unsigned int GenPath::unvisitedCount()
+{
+  unsigned int count = 0;
+  for(unsigned int i=0; i<m_visited.size(); i++)
+    if(!m_visited[i])
+      count++;
+  return count;
 }
 
 
@@ -234,6 +272,7 @@ bool GenPath::buildReport()
   m_msgs << endl;
   m_msgs << "Tour Status" << endl;
   m_msgs << "------------------------" << endl;
+  m_msgs << "   Tours Generated:      " << m_tours_done << endl;
   m_msgs << "   Points Visited:       " << visited << endl;
   m_msgs << "   Points Unvisited:     " << (m_points.size() - visited) << endl;
 
