@@ -31,6 +31,12 @@ class Odometry : public AppCastingMOOSApp
  private: // Configuration variables
 
  private: // State variables
+   bool   m_first_reading;
+   double m_current_x;
+   double m_current_y;
+   double m_previous_x;
+   double m_previous_y;
+   double m_total_distance;
 };
 
 #endif 
