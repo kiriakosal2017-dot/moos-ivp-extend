@@ -43,6 +43,7 @@ GenRescue::GenRescue()
                           // clustered 7~nn) while snake/nn each collapse in the
                           // other regime. Path-based -> standard BHV_Waypoint.
   m_cur_target_id = -1;   // dev: no committed target yet
+  m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
   srand((unsigned) getpid());          // distinct RNG per match process
 
@@ -626,19 +627,22 @@ void GenRescue::planSnkRand()
 }
 
 //---------------------------------------------------------
-// Procedure: planAdapt() -- ROBUST across distributions.
-//   Detect whether the swimmers are clustered via the mean nearest-neighbour
-//   distance (small => tight clusters, large => spread/uniform). Clustered wants
-//   greedy nearest (clears a cluster before moving); spread wants the systematic
-//   snake sweep. Measured: clustered ~8-10m, uniform ~16-20m -> threshold 13m.
+// Procedure: planAdapt() -- ROBUST across distributions AND dynamic reveal.
+//   Detect clustering via mean nearest-neighbour distance (small => tight
+//   clusters => greedy nearest; large => spread => snake sweep; clustered ~8-10m,
+//   uniform ~16-20m, threshold 13m). CRITICAL: decide the mode ONCE and COMMIT --
+//   under dynamic reveal the known set keeps changing, and re-deciding every plan
+//   made the boat flip snake<->greedy mid-game (path churn, lost swimmers). We
+//   wait until enough swimmers are known to trust the metric (default snake until
+//   then), then lock the mode for the rest of the game.
 
 void GenRescue::planAdapt()
 {
-  std::vector<XYPoint> pts;
-  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
-    pts.push_back(p->second);
-  double meanNN = 1e9;
-  if(pts.size() >= 2){
+  if(m_adapt_mode < 0) {
+    std::vector<XYPoint> pts;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+      pts.push_back(p->second);
+    if(pts.size() < 5) { planSnake(); return; }   // too few to judge -> default snake, don't commit
     double sum = 0;
     for(size_t i=0;i<pts.size();i++){
       double md=-1;
@@ -648,11 +652,11 @@ void GenRescue::planAdapt()
       }
       sum += md;
     }
-    meanNN = sum/pts.size();
+    double meanNN = sum/pts.size();
+    m_adapt_mode = (meanNN < 13.0) ? 1 : 0;        // 1=clustered(greedy), 0=spread(snake) -- LOCKED
   }
-  const double THRESH = 13.0;
-  if(meanNN < THRESH) planDev();     // clustered -> greedy nearest
-  else                planSnake();   // spread/uniform -> systematic sweep
+  if(m_adapt_mode == 1) planDev();
+  else                  planSnake();
 }
 
 //---------------------------------------------------------

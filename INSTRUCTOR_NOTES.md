@@ -5,10 +5,12 @@ My entry is `pGenRescue` (in `src/pGenRescue/`). It runs by default with my
 champion strategy, publishes `SURVEY_UPDATE` to the standard `BHV_Waypoint`, and
 needs nothing unusual in the helm — drop it into the rescue mission and it works.
 
-The champion is **adaptive**: each time it plans, it measures how the currently
-known swimmers are spread (mean nearest-neighbour distance) and picks the right
-tactic — a **boustrophedon sweep** when swimmers are spread out, or a **greedy
-nearest-neighbour collector** when they're in tight clusters.
+The champion is **adaptive**: it measures how the swimmers are spread (mean
+nearest-neighbour distance) and picks the right tactic — a **boustrophedon sweep**
+when swimmers are spread out, or a **greedy nearest-neighbour collector** when
+they're in tight clusters. It decides once enough swimmers are known and then
+**commits** to that mode (re-deciding every tick made it flip and thrash once
+swimmers start appearing dynamically and being rescued).
 
 I chose it with an **autoresearch pipeline**: I implemented several strategies
 (nearest-neighbour, an opponent-aware Voronoi collector, centre-of-mass bias,

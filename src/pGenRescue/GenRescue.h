@@ -62,6 +62,7 @@ class GenRescue : public AppCastingMOOSApp
   std::string m_vname;
   std::string m_strategy;        // "dev" | "random" | "greedy" | "snake" | "champ1"
   int         m_cur_target_id;   // dev: committed rescue target id (-1 = none)
+  int         m_adapt_mode;      // adapt: locked mode (-1=unset, 0=snake, 1=greedy)
   int         m_snk_dir;         // snk_rand: chosen sweep direction (-1=unset, 0/1)
   int         m_snk_xflip;       // snk_rand: chosen x-direction flip (0/1)
   
