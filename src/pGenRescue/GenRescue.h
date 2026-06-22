@@ -33,11 +33,17 @@ class GenRescue : public AppCastingMOOSApp
   bool handleMailNewSwimmer(std::string);
   bool handleMailFoundSwimmer(std::string);
   bool handleMailRescueRegion(std::string);
-  void postShortestPath();
+  void planPath();               // dispatch on m_strategy
+  void planSnake();              // frozen R9 boustrophedon (was postShortestPath)
+  void planGreedy();             // frozen nearest-neighbour tour
+  void planRandom();             // frozen random-points tour
+  void planDev();                // evolving brain (autoresearch edits THIS)
+  void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
   void postNullPath();
 
  private: // Config variables
   std::string m_vname;
+  std::string m_strategy;        // "dev" | "random" | "greedy" | "snake"
   
  private: // State variables
   XYSegList  m_path;

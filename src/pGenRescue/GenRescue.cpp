@@ -34,6 +34,7 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
+  m_strategy = "snake";   // default; harness injects per-vehicle via targ patch
 
   m_last_plan_time  = 0;
   m_replan_interval = 15;   // game-seconds between forced re-plans
@@ -107,7 +108,7 @@ bool GenRescue::Iterate()
   // points resets the behaviour to vertex 0, which at a 15s cadence would
   // restart the boat before it gets anywhere.
   if(have_nav && m_plan_pending)
-    postShortestPath();
+    planPath();
 
   AppCastingMOOSApp::PostReport();
   return(true);
@@ -130,6 +131,8 @@ bool GenRescue::OnStartUp()
     string value  = sLine;
     if(param == "vname")
       m_vname = value;
+    else if(param == "strategy")
+      m_strategy = tolower(value);
   }
   
   RegisterVariables();	
@@ -145,7 +148,7 @@ void GenRescue::RegisterVariables()
   Register("SWIMMER_ALERT", 0);
   Register("FOUND_SWIMMER", 0);
   // Ownship position: without these, m_nav_*_set never becomes true and
-  // postShortestPath() never runs -- the swimmer-aware path is never posted
+  // planPath() never runs -- the swimmer-aware path is never posted
   // and the vehicle silently falls back to the .bhv default waypoints.
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
@@ -201,27 +204,45 @@ bool GenRescue::handleMailFoundSwimmer(string str)
 }
 
 //---------------------------------------------------------
-// Procedure: postShortestPath()
+// Procedure: planPath()
 
-void GenRescue::postShortestPath()
+void GenRescue::planPath()
 {
-  // Build a path through the known, still-unrescued swimmers, ordered
-  // greedily (nearest-neighbour) starting from ownship's position.
   if(!m_nav_x_set || !m_nav_y_set)
     return;
-
-  // No swimmers left -> stop surveying.
   if(m_swimmers.empty()) {
     postNullPath();
     m_plan_pending = false;
     return;
   }
+  if(m_strategy == "dev")         planDev();
+  else if(m_strategy == "greedy") planGreedy();
+  else if(m_strategy == "random") planRandom();
+  else                            planSnake();   // default/frozen
+  m_plan_pending   = false;
+  m_last_plan_time = m_curr_time;
+}
 
-  // Collect the current swimmer positions...
+//---------------------------------------------------------
+// Procedure: postPath()
+
+void GenRescue::postPath(const XYSegList& path)
+{
+  m_path = path;
+  m_path.set_label("one");
+  Notify("VIEW_SEGLIST", m_path.get_spec());
+  Notify("SURVEY_UPDATE", "points = " + m_path.get_spec_pts());
+  reportEvent("SURVEY_UPDATE points=" + m_path.get_spec_pts());
+}
+
+//---------------------------------------------------------
+// Procedure: planSnake()
+
+void GenRescue::planSnake()
+{
   std::vector<XYPoint> pts;
   std::map<int, XYPoint>::iterator p;
-  double ymin = 0;
-  bool   first = true;
+  double ymin = 0; bool first = true;
   for(p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
     pts.push_back(p->second);
     if(first || (p->second.y() < ymin)) { ymin = p->second.y(); first = false; }
@@ -245,20 +266,15 @@ void GenRescue::postShortestPath()
   XYSegList path;
   for(size_t i = 0; i < pts.size(); i++)
     path.add_vertex(pts[i].x(), pts[i].y());
-  m_path = path;
-  m_path.set_label("one");
-
-  Notify("VIEW_SEGLIST", m_path.get_spec());   // show the full planned tour
-
-  string update_var = "SURVEY_UPDATE";
-  string update_str = "points = " + m_path.get_spec_pts();
-
-  Notify(update_var, update_str);
-  reportEvent("SURVEY_UPDATE=" + update_str);
-
-  m_plan_pending  = false;
-  m_last_plan_time = m_curr_time;
+  postPath(path);
 }
+
+//---------------------------------------------------------
+// Procedure stubs: planGreedy(), planRandom(), planDev()
+
+void GenRescue::planGreedy() { planSnake(); }  // replaced in Task 2
+void GenRescue::planRandom() { planSnake(); }  // replaced in Task 2
+void GenRescue::planDev()    { planSnake(); }  // replaced in Task 4
 
 //---------------------------------------------------------
 // Procedure: postNullPath()
