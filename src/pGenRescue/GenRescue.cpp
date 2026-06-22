@@ -37,6 +37,9 @@ GenRescue::GenRescue()
   m_rescued_count = 0;
   m_strategy = "snake";   // default; harness injects per-vehicle via targ patch
 
+  m_opp_set = false;
+  m_opp_x = 0; m_opp_y = 0;
+
   m_last_plan_time  = 0;
   m_replan_interval = 15;   // game-seconds between forced re-plans
 
@@ -69,6 +72,8 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
       m_nav_y = msg.GetDouble();
       m_nav_y_set = true;
     }
+    else if(key == "NODE_REPORT")
+      handled = handleMailNodeReport(sval);
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
       handled = false;
@@ -155,6 +160,7 @@ void GenRescue::RegisterVariables()
   // and the vehicle silently falls back to the .bhv default waypoints.
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
+  Register("NODE_REPORT", 0);
 }
 
 
@@ -203,6 +209,23 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     // ~1140s). Keeping the erase (above) lets m_swimmers empty out when all are
     // rescued, which releases the RETURN guard so the boat heads home cleanly.
   }
+  return(true);
+}
+
+//---------------------------------------------------------
+// Procedure: handleMailNodeReport()
+
+bool GenRescue::handleMailNodeReport(string str)
+{
+  string name; double x = 0, y = 0;
+  bool ok_n = tokParse(str, "NAME", ',', '=', name);
+  bool ok_x = tokParse(str, "X",    ',', '=', x);
+  bool ok_y = tokParse(str, "Y",    ',', '=', y);
+  if(!ok_n || !ok_x || !ok_y)
+    return(false);
+  if(name == m_vname)   // ignore our own relayed report
+    return(true);
+  m_opp_name = name; m_opp_x = x; m_opp_y = y; m_opp_set = true;
   return(true);
 }
 
@@ -348,5 +371,8 @@ bool GenRescue::buildReport()
   m_msgs << "Swimmers rescued:           " << m_rescued_count   << endl;
   m_msgs << "Planned path waypoints:     " << m_path.size()     << endl;
   m_msgs << "Re-plan pending:            " << (m_plan_pending ? "yes" : "no") << endl;
+  m_msgs << "Opponent:                   "
+         << (m_opp_set ? (m_opp_name + " @ " + doubleToStringX(m_opp_x,1) + "," +
+                          doubleToStringX(m_opp_y,1)) : "unknown") << endl;
   return(true);
 }

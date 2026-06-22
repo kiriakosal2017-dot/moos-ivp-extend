@@ -33,6 +33,7 @@ class GenRescue : public AppCastingMOOSApp
   bool handleMailNewSwimmer(std::string);
   bool handleMailFoundSwimmer(std::string);
   bool handleMailRescueRegion(std::string);
+  bool handleMailNodeReport(std::string);
   void planPath();               // dispatch on m_strategy
   void planSnake();              // frozen R9 boustrophedon (was postShortestPath)
   void planGreedy();             // frozen nearest-neighbour tour
@@ -59,6 +60,12 @@ class GenRescue : public AppCastingMOOSApp
   std::map<int, XYPoint> m_swimmers;
   bool                   m_plan_pending;
   unsigned int           m_rescued_count;
+
+  // Opponent position (tracked from NODE_REPORT)
+  bool        m_opp_set;
+  double      m_opp_x;
+  double      m_opp_y;
+  std::string m_opp_name;
 
   // Periodic re-plan throttle. We re-issue the survey path every
   // m_replan_interval game-seconds while swimmers remain so the
