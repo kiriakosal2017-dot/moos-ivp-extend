@@ -10,6 +10,12 @@
 
 ## Global Constraints
 
+- **Repo locations (this laptop):** the trees live under
+  `/Users/kiriakos/Documents/docker/MIT/Course_2/` — `moos-ivp-extend`,
+  `moos-ivp-greece`, `moos-ivp-2680` are siblings there (NOT under `~/`; `~/` is the
+  PABLO layout). All harness scripts derive their base from their own location
+  (`$(dirname "$0")`) so they are portable across laptop and PABLO. One-off verify
+  commands below use that same Course_2 base.
 - **Do NOT modify the canonical mission** in `moos-ivp-greece/missions/rescue_athens`. All per-match customization is done by patching the generated `targ_*` files after `--just_make` (same pattern as the proven `recover_spd` shim). Verbatim policy from the design spec §7.
 - **Git deliverable = `pGenRescue` only.** The `autoresearch_adv/` scaffolding and any harness scripts live under `moos-ivp-extend/autoresearch_adv/` and are **not** pushed (local-only, like the solo `autoresearch/`).
 - **Reference strategies (`random`, `greedy`, `snake`) are frozen** once written; the autoresearch loop edits only the `dev` code path.
@@ -458,7 +464,12 @@ git commit -m "feat(pGenRescue): baseline opponent-aware dev brain"
 # Prints: us=<n> them=<n> result=<win|loss|tie>
 set -u
 OUR="$1"; OPP="$2"; SWIM="$3"; WARP="${4:-12}"
-MISN=~/moos-ivp-greece/missions/rescue_athens
+# Portable paths: derive the repo + course root from this script's location
+# (works on the laptop under Course_2/ and on the PABLO under ~/).
+SELF="$(cd "$(dirname "$0")" && pwd)"          # .../moos-ivp-extend/autoresearch_adv
+EXT="$(dirname "$SELF")"                        # .../moos-ivp-extend
+COURSE="$(dirname "$EXT")"                      # .../Course_2  (or ~ on pablo)
+MISN="$COURSE/moos-ivp-greece/missions/rescue_athens"
 cd "$MISN" || exit 9
 
 # 1) Build targ files for a 2-rescue-vehicle match (abe + ben), no GUI.
@@ -541,8 +552,10 @@ git commit -m "feat(harness): single -r2 head-to-head match runner"
 # Usage: score.sh [N] [warp]   (N matches per opponent, default 5)
 set -u
 N="${1:-5}"; WARP="${2:-12}"
-HERE=~/moos-ivp-extend/autoresearch_adv
-MISN=~/moos-ivp-greece/missions/rescue_athens
+HERE="$(cd "$(dirname "$0")" && pwd)"           # .../moos-ivp-extend/autoresearch_adv
+EXT="$(dirname "$HERE")"
+COURSE="$(dirname "$EXT")"
+MISN="$COURSE/moos-ivp-greece/missions/rescue_athens"
 OPPONENTS="random greedy snake"   # champion added in Task 8
 ATHENS_POLY="-215.0,-2.0:-76.0,-86.0:-16.0,6.0:-79.0,4.0"
 
@@ -658,8 +671,10 @@ git commit -m "chore(autoresearch_adv): locked goal + round log scaffolding"
 #!/bin/bash
 # Snapshot current pGenRescue source as the champion and build pGenRescueChamp.
 set -e
-SRC=~/moos-ivp-extend/src/pGenRescue
-CH=~/moos-ivp-extend/autoresearch_adv/champion
+HERE="$(cd "$(dirname "$0")" && pwd)"           # .../moos-ivp-extend/autoresearch_adv
+EXT="$(dirname "$HERE")"
+SRC="$EXT/src/pGenRescue"
+CH="$HERE/champion"
 mkdir -p "$CH"
 cp "$SRC"/*.cpp "$SRC"/*.h "$CH"/
 echo "champion snapshot updated at $CH"
