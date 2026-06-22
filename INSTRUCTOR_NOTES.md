@@ -5,23 +5,23 @@ My entry is `pGenRescue` (in `src/pGenRescue/`). It runs by default with my
 champion strategy, publishes `SURVEY_UPDATE` to the standard `BHV_Waypoint`, and
 needs nothing unusual in the helm — drop it into the rescue mission and it works.
 
-The champion is an **opponent-aware Voronoi collector**: at each re-plan it splits
-the known swimmers into the ones I'm closer to than the opponent (my Voronoi
-cell) and the rest; it goes after my-cell swimmers first (nearest-neighbour
-within them) to secure the ones I can win, then mops up the contested/opponent
-side. It re-plans whenever a new swimmer appears or one is rescued.
+The champion is a **boustrophedon sweep**: it orders all known swimmers into
+horizontal lanes and sweeps them left-to-right / right-to-left, so the boat
+covers the whole field systematically without backtracking and captures cleanly
+(no slipping past a swimmer). It re-plans when a new swimmer appears.
 
 I chose it with an **autoresearch pipeline**: I implemented several strategies
-(plain nearest-neighbour, this Voronoi version, a centre-of-mass bias, an
-auction/preemption scheme, a boustrophedon sweep, and a custom reactive
-behaviour) and ran a **round-robin tournament where they play head-to-head
-against each other** (both sides, identical swimmer fields). Testing only against
-weak reference bots was misleading — it made plain nearest-neighbour look best —
-but in the head-to-head tournament the Voronoi collector clearly won (e.g. it beat
-plain nearest-neighbour 5-0-1 and the sweeper 4-2 over an 18-game run), because
-securing the swimmers you can win before the opponent matters once the opponent
-is also smart. This matches the dynamic-vehicle-routing literature (partition-then
--collect policies beat nearest-neighbour).
+(plain nearest-neighbour, an opponent-aware Voronoi collector, a centre-of-mass
+bias, an auction/preemption scheme, the boustrophedon sweep, and a custom
+reactive behaviour) and ran a **round-robin tournament where they play
+head-to-head against each other** (both sides, identical swimmer fields). Testing
+only against weak reference bots was misleading — it made plain nearest-neighbour
+look best — but head-to-head, with enough scenarios to beat the noise, the
+**boustrophedon sweep won**: in a reliable 16-game duel it beat the Voronoi
+collector 11-4, and it topped the full round-robin. With a slow boat and a time
+limit, thorough efficient coverage beats clever opponent-aware ordering (which
+wastes moves). Nearest-neighbour and the "smart" detour strategies all finished
+behind it.
 
 ## I also built a custom IvP behaviour
 On top of the app I implemented my own IvP helm behaviour, **`BHV_Rescue`**

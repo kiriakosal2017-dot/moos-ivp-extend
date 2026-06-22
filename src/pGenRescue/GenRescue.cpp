@@ -35,11 +35,12 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "vor";     // DEFAULT = tournament champion (opponent-aware Voronoi
-                          // ordering: secure swimmers we're closer to than the
-                          // opponent FIRST, then mop up). Beat nn 5-0-1 and snake
-                          // 4-2 in the round-robin. Path-based -> works with the
-                          // standard BHV_Waypoint in the competition mission.
+  m_strategy = "snake";   // DEFAULT = tournament champion. Round-robin among all
+                          // our strategies + a reliable N=8 duel settled it:
+                          // snake (systematic boustrophedon sweep) beat vor 11-4
+                          // and topped the field. With a slow boat, thorough
+                          // efficient coverage beats opponent-aware partitioning.
+                          // Path-based -> works with the standard BHV_Waypoint.
   m_cur_target_id = -1;   // dev: no committed target yet
 
   m_opp_set = false;
@@ -259,6 +260,8 @@ void GenRescue::planPath()
   }
   if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
   else if(m_strategy == "vor")    planVor();
+  else if(m_strategy == "vorx")   planVorx();
+  else if(m_strategy == "vori")   planVori();
   else if(m_strategy == "cen")    planCen();
   else if(m_strategy == "auc")    planAuc();
   else if(m_strategy == "champ1") planChamp1();  // frozen hall-of-fame opponent
@@ -445,6 +448,67 @@ void GenRescue::planVor()   // opponent-aware: our-Voronoi swimmers first, then 
       for(size_t i=0;i<set.size();i++){ double d=hypot(set[i].x()-cx,set[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
       cx=set[bi].x(); cy=set[bi].y(); path.add_vertex(cx,cy); set.erase(set.begin()+bi);
     }
+  }
+  postPath(path);
+}
+
+void GenRescue::planVorx()  // vor with a generous claim margin (contest the middle)
+{
+  const double margin = 15.0;
+  std::vector<XYPoint> ours, theirs;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+    if(m_opp_set) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od + margin) ours.push_back(p->second); else theirs.push_back(p->second);
+    } else ours.push_back(p->second);
+  }
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  for(int phase=0; phase<2; phase++){
+    std::vector<XYPoint>& set = (phase==0) ? ours : theirs;
+    while(!set.empty()){
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<set.size();i++){ double d=hypot(set[i].x()-cx,set[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=set[bi].x(); cy=set[bi].y(); path.add_vertex(cx,cy); set.erase(set.begin()+bi);
+    }
+  }
+  postPath(path);
+}
+
+void GenRescue::planVori()  // vor + interception: within ours, grab most-threatened first (bounded detour)
+{
+  const double THREAT = 40.0, STEAL_FACTOR = 1.3;
+  std::vector<XYPoint> ours, theirs;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+    if(m_opp_set) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od) ours.push_back(p->second); else theirs.push_back(p->second);
+    } else ours.push_back(p->second);
+  }
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  // ours: prefer the most-threatened (opponent nearest) swimmer if within a bounded detour, else nearest.
+  while(!ours.empty()){
+    double ndist=-1;
+    for(size_t i=0;i<ours.size();i++){ double d=hypot(ours[i].x()-cx,ours[i].y()-cy); if(ndist<0||d<ndist)ndist=d; }
+    size_t bi=0; double bd=-1; size_t ci=0; double cthreat=-1; bool contested=false;
+    for(size_t i=0;i<ours.size();i++){
+      double ud=hypot(ours[i].x()-cx,ours[i].y()-cy);
+      if(bd<0||ud<bd){ bd=ud; bi=i; }
+      if(m_opp_set){
+        double od=hypot(ours[i].x()-m_opp_x,ours[i].y()-m_opp_y);
+        if((od<THREAT)&&(ud<=STEAL_FACTOR*ndist)){ if(cthreat<0||od<cthreat){ cthreat=od; ci=i; contested=true; } }
+      }
+    }
+    size_t pick=contested?ci:bi;
+    cx=ours[pick].x(); cy=ours[pick].y(); path.add_vertex(cx,cy); ours.erase(ours.begin()+pick);
+  }
+  while(!theirs.empty()){
+    size_t bi=0; double bd=-1;
+    for(size_t i=0;i<theirs.size();i++){ double d=hypot(theirs[i].x()-cx,theirs[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+    cx=theirs[bi].x(); cy=theirs[bi].y(); path.add_vertex(cx,cy); theirs.erase(theirs.begin()+bi);
   }
   postPath(path);
 }

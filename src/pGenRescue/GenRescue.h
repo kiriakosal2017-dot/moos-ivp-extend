@@ -44,6 +44,8 @@ class GenRescue : public AppCastingMOOSApp
   // --- TOURNAMENT contenders (frozen; compete round-robin against each other) ---
   // nn == planDev (aggressive nearest-neighbour collector, current champion)
   void planVor();                // opponent-aware: visit OUR-Voronoi swimmers first, then mop up
+  void planVorx();               // vor with a generous claim margin (contest the middle)
+  void planVori();               // vor + interception: within ours, grab the most-threatened first
   void planCen();                // centrality-weighted NN (bias toward remaining-centroid)
   void planAuc();                // auction/preemption: steal contested-winnable swimmers (bounded detour)
   void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
