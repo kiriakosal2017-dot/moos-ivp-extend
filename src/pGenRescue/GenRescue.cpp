@@ -362,10 +362,12 @@ void GenRescue::planDev()
     return;
   }
 
-  // Aggressive nearest-neighbour tour over ALL known swimmers from ownship,
-  // posted to BHV_Waypoint. Proven-strong collector (~12 rescues with the
-  // correct binary). Opponent-aware ordering + 2-opt layer on top in later
-  // iterations -- THIS selection/ordering is the lever the loop tunes.
+  // CHAMPION: plain aggressive nearest-neighbour tour over ALL known swimmers
+  // from ownship -> BHV_Waypoint, re-planned on each new swimmer. In a slow-boat,
+  // time-limited race, front-loading nearby rescues beats every "clever" variant
+  // tested head-to-head on identical scenarios: 2-opt path (worse), opponent-aware
+  // ordering S1 (within noise), centrality S4 (lost 3-11/6-7), auction+preemption
+  // S6 (0.278 vs NN 0.389). Detours cost rescues; plain NN wins.
   std::vector<XYPoint> rem;
   for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
       p != m_swimmers.end(); p++)
