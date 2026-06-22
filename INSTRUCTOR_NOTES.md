@@ -5,23 +5,22 @@ My entry is `pGenRescue` (in `src/pGenRescue/`). It runs by default with my
 champion strategy, publishes `SURVEY_UPDATE` to the standard `BHV_Waypoint`, and
 needs nothing unusual in the helm — drop it into the rescue mission and it works.
 
-The champion is a **boustrophedon sweep**: it orders all known swimmers into
-horizontal lanes and sweeps them left-to-right / right-to-left, so the boat
-covers the whole field systematically without backtracking and captures cleanly
-(no slipping past a swimmer). It re-plans when a new swimmer appears.
+The champion is **adaptive**: each time it plans, it measures how the currently
+known swimmers are spread (mean nearest-neighbour distance) and picks the right
+tactic — a **boustrophedon sweep** when swimmers are spread out, or a **greedy
+nearest-neighbour collector** when they're in tight clusters.
 
 I chose it with an **autoresearch pipeline**: I implemented several strategies
-(plain nearest-neighbour, an opponent-aware Voronoi collector, a centre-of-mass
-bias, an auction/preemption scheme, the boustrophedon sweep, and a custom
-reactive behaviour) and ran a **round-robin tournament where they play
-head-to-head against each other** (both sides, identical swimmer fields). Testing
-only against weak reference bots was misleading — it made plain nearest-neighbour
-look best — but head-to-head, with enough scenarios to beat the noise, the
-**boustrophedon sweep won**: in a reliable 16-game duel it beat the Voronoi
-collector 11-4, and it topped the full round-robin. With a slow boat and a time
-limit, thorough efficient coverage beats clever opponent-aware ordering (which
-wastes moves). Nearest-neighbour and the "smart" detour strategies all finished
-behind it.
+(nearest-neighbour, an opponent-aware Voronoi collector, centre-of-mass bias,
+auction/preemption, the boustrophedon sweep, and a custom reactive behaviour) and
+ran a **round-robin tournament where they play head-to-head against each other**
+(both sides, identical swimmer fields, enough scenarios to beat the noise). The
+key finding: **no single fixed strategy is best for every swimmer layout.** On
+uniformly-spread fields the sweep wins (greedy finishes last); on clustered
+fields greedy wins (the sweep wastes time crossing empty space and finishes
+last). The adaptive strategy detects which case it's in and matches the winner in
+both — it was top-tier on uniform AND clustered, while each fixed strategy
+collapsed in the other regime. So my entry is the adaptive `pGenRescue`.
 
 ## I also built a custom IvP behaviour
 On top of the app I implemented my own IvP helm behaviour, **`BHV_Rescue`**

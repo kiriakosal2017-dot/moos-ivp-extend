@@ -35,13 +35,16 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "snake";   // DEFAULT = tournament champion. Round-robin among all
-                          // our strategies + a reliable N=8 duel settled it:
-                          // snake (systematic boustrophedon sweep) beat vor 11-4
-                          // and topped the field. With a slow boat, thorough
-                          // efficient coverage beats opponent-aware partitioning.
-                          // Path-based -> works with the standard BHV_Waypoint.
+  m_strategy = "adapt";   // DEFAULT = ROBUST champion. The best strategy depends on
+                          // how swimmers are distributed: snake (sweep) wins on
+                          // UNIFORM fields, greedy-NN wins on CLUSTERED fields.
+                          // adapt detects clustering (mean-NN distance) and picks
+                          // the right one -> top-tier in BOTH (uniform 12=snake,
+                          // clustered 7~nn) while snake/nn each collapse in the
+                          // other regime. Path-based -> standard BHV_Waypoint.
   m_cur_target_id = -1;   // dev: no committed target yet
+  m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
+  srand((unsigned) getpid());          // distinct RNG per match process
 
   m_opp_set = false;
   m_opp_x = 0; m_opp_y = 0;
@@ -127,6 +130,8 @@ bool GenRescue::Iterate()
   // re-posting resets BHV_Waypoint to vertex 0 so we must not do it every tick.
   if(have_nav && m_strategy == "devb")
     planDevB();
+  else if(have_nav && m_strategy == "hunt")
+    planHunt();
   else if(have_nav && m_plan_pending)
     planPath();
 
@@ -259,11 +264,16 @@ void GenRescue::planPath()
     return;
   }
   if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
+  else if(m_strategy == "adapt")  planAdapt();
   else if(m_strategy == "vor")    planVor();
   else if(m_strategy == "vorx")   planVorx();
   else if(m_strategy == "vori")   planVori();
   else if(m_strategy == "cen")    planCen();
   else if(m_strategy == "auc")    planAuc();
+  else if(m_strategy == "snk_near") planSnkNear();
+  else if(m_strategy == "snk_fine") planSnkFine();
+  else if(m_strategy == "snk_wide") planSnkWide();
+  else if(m_strategy == "snk_rand") planSnkRand();
   else if(m_strategy == "champ1") planChamp1();  // frozen hall-of-fame opponent
   else if(m_strategy == "greedy") planGreedy();
   else if(m_strategy == "random") planRandom();
@@ -559,6 +569,127 @@ void GenRescue::planAuc()   // auction/preemption: steal contested-winnable (bou
     cx=rem[pick].x(); cy=rem[pick].y(); path.add_vertex(cx,cy); rem.erase(rem.begin()+pick);
   }
   postPath(path);
+}
+
+// Shared boustrophedon builder for snake variants. lane_h = lane height;
+// near_start = begin the sweep from the field end nearest ownship (less wasted
+// initial travel than always starting at the bottom lane).
+void GenRescue::snakeOrder(double lane_h, bool near_start)
+{
+  std::vector<XYPoint> pts;
+  double ymin=0, ymax=0; bool first=true;
+  for(std::map<int,XYPoint>::iterator p=m_swimmers.begin(); p!=m_swimmers.end(); p++){
+    pts.push_back(p->second);
+    double y=p->second.y();
+    if(first){ ymin=ymax=y; first=false; } else { if(y<ymin)ymin=y; if(y>ymax)ymax=y; }
+  }
+  double y0=ymin;
+  std::sort(pts.begin(), pts.end(),
+    [&](const XYPoint&a, const XYPoint&b){
+      int la=(int)floor((a.y()-y0)/lane_h), lb=(int)floor((b.y()-y0)/lane_h);
+      if(la!=lb) return la<lb;
+      return (la%2==0)?(a.x()<b.x()):(a.x()>b.x());
+    });
+  if(near_start && ((m_nav_y - ymin) > (ymax - m_nav_y)))
+    std::reverse(pts.begin(), pts.end());   // start from the end nearest ownship
+  XYSegList path;
+  for(size_t i=0;i<pts.size();i++) path.add_vertex(pts[i].x(), pts[i].y());
+  postPath(path);
+}
+void GenRescue::planSnkNear(){ snakeOrder(10.0, true);  }
+void GenRescue::planSnkFine(){ snakeOrder( 6.0, false); }
+void GenRescue::planSnkWide(){ snakeOrder(15.0, false); }
+
+// Randomized snake: orientation (lane direction + x-direction) chosen ONCE per
+// game so the boat's path is unpredictable -- a deterministic snake could be
+// exploited by a smart opponent that anticipates where you'll be.
+void GenRescue::planSnkRand()
+{
+  if(m_snk_dir < 0){ m_snk_dir = rand()%2; m_snk_xflip = rand()%2; }
+  std::vector<XYPoint> pts; double ymin=0; bool first=true;
+  for(std::map<int,XYPoint>::iterator p=m_swimmers.begin(); p!=m_swimmers.end(); p++){
+    pts.push_back(p->second);
+    if(first || p->second.y()<ymin){ ymin=p->second.y(); first=false; }
+  }
+  double y0=ymin, lane_h=10.0; int xf=m_snk_xflip;
+  std::sort(pts.begin(), pts.end(),
+    [&](const XYPoint&a, const XYPoint&b){
+      int la=(int)floor((a.y()-y0)/lane_h), lb=(int)floor((b.y()-y0)/lane_h);
+      if(la!=lb) return la<lb;
+      bool asc = ((la%2==0) != (xf==1));   // random x-direction per lane
+      return asc ? (a.x()<b.x()) : (a.x()>b.x());
+    });
+  if(m_snk_dir) std::reverse(pts.begin(), pts.end());   // random lane direction
+  XYSegList path;
+  for(size_t i=0;i<pts.size();i++) path.add_vertex(pts[i].x(), pts[i].y());
+  postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planAdapt() -- ROBUST across distributions.
+//   Detect whether the swimmers are clustered via the mean nearest-neighbour
+//   distance (small => tight clusters, large => spread/uniform). Clustered wants
+//   greedy nearest (clears a cluster before moving); spread wants the systematic
+//   snake sweep. Measured: clustered ~8-10m, uniform ~16-20m -> threshold 13m.
+
+void GenRescue::planAdapt()
+{
+  std::vector<XYPoint> pts;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+    pts.push_back(p->second);
+  double meanNN = 1e9;
+  if(pts.size() >= 2){
+    double sum = 0;
+    for(size_t i=0;i<pts.size();i++){
+      double md=-1;
+      for(size_t j=0;j<pts.size();j++) if(i!=j){
+        double d=hypot(pts[i].x()-pts[j].x(), pts[i].y()-pts[j].y());
+        if(md<0||d<md) md=d;
+      }
+      sum += md;
+    }
+    meanNN = sum/pts.size();
+  }
+  const double THRESH = 13.0;
+  if(meanNN < THRESH) planDev();     // clustered -> greedy nearest
+  else                planSnake();   // spread/uniform -> systematic sweep
+}
+
+//---------------------------------------------------------
+// Procedure: planHunt() -- ADVERSARY (reactive, drives BHV_Rescue via RESCUE_TGT)
+//   Each tick, target the swimmer the OPPONENT is closest to that WE can still
+//   reach first (us_d <= opp_d) -- i.e. snipe the opponent's imminent catch. If
+//   nothing is stealable, grab our own nearest. Designed to beat predictable
+//   collectors (like snake) by denying their next pickups.
+
+void GenRescue::planHunt()
+{
+  if(!m_nav_x_set || !m_nav_y_set)
+    return;
+  if(m_swimmers.empty()) { Notify("RESCUE_TGT", ""); return; }
+
+  int tgt = -1;
+  if(m_opp_set) {
+    double best_oppd = -1;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++){
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od) {                              // we can reach it before the opponent
+        if(best_oppd < 0 || od < best_oppd) {     // the one the opponent is about to grab
+          best_oppd = od; tgt = p->first;
+        }
+      }
+    }
+  }
+  if(tgt < 0) {                                   // nothing stealable -> our nearest
+    double bd = -1;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++){
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      if(bd < 0 || ud < bd) { bd = ud; tgt = p->first; }
+    }
+  }
+  XYPoint t = m_swimmers[tgt];
+  Notify("RESCUE_TGT", doubleToStringX(t.x(),2) + "," + doubleToStringX(t.y(),2));
 }
 
 //---------------------------------------------------------

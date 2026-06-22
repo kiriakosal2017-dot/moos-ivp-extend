@@ -40,6 +40,8 @@ class GenRescue : public AppCastingMOOSApp
   void planRandom();             // frozen random-points tour
   void planDev();                // evolving brain (autoresearch edits THIS)
   void planDevB();               // PHASE 2: publishes RESCUE_TGT for the custom BHV_Rescue behaviour
+  void planHunt();               // ADVERSARY: reactively steal the swimmer the opponent is going for
+  void planAdapt();              // ROBUST: detect clustering (mean-NN dist) -> greedy(nn) if clustered, snake if spread
   void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
   // --- TOURNAMENT contenders (frozen; compete round-robin against each other) ---
   // nn == planDev (aggressive nearest-neighbour collector, current champion)
@@ -48,6 +50,11 @@ class GenRescue : public AppCastingMOOSApp
   void planVori();               // vor + interception: within ours, grab the most-threatened first
   void planCen();                // centrality-weighted NN (bias toward remaining-centroid)
   void planAuc();                // auction/preemption: steal contested-winnable swimmers (bounded detour)
+  void snakeOrder(double lane_h, bool near_start);  // shared boustrophedon builder
+  void planSnkNear();            // snake that starts the sweep from the end nearest ownship
+  void planSnkFine();            // snake with finer lanes (lane_h=6)
+  void planSnkWide();            // snake with wider lanes (lane_h=15)
+  void planSnkRand();            // snake with a RANDOM (per-game) sweep orientation -- unpredictable
   void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
   void postNullPath();
 
@@ -55,6 +62,8 @@ class GenRescue : public AppCastingMOOSApp
   std::string m_vname;
   std::string m_strategy;        // "dev" | "random" | "greedy" | "snake" | "champ1"
   int         m_cur_target_id;   // dev: committed rescue target id (-1 = none)
+  int         m_snk_dir;         // snk_rand: chosen sweep direction (-1=unset, 0/1)
+  int         m_snk_xflip;       // snk_rand: chosen x-direction flip (0/1)
   
  private: // State variables
   XYSegList  m_path;
