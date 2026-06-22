@@ -41,6 +41,11 @@ class GenRescue : public AppCastingMOOSApp
   void planDev();                // evolving brain (autoresearch edits THIS)
   void planDevB();               // PHASE 2: publishes RESCUE_TGT for the custom BHV_Rescue behaviour
   void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
+  // --- TOURNAMENT contenders (frozen; compete round-robin against each other) ---
+  // nn == planDev (aggressive nearest-neighbour collector, current champion)
+  void planVor();                // opponent-aware: visit OUR-Voronoi swimmers first, then mop up
+  void planCen();                // centrality-weighted NN (bias toward remaining-centroid)
+  void planAuc();                // auction/preemption: steal contested-winnable swimmers (bounded detour)
   void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
   void postNullPath();
 

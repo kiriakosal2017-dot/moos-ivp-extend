@@ -35,9 +35,11 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "dev";     // DEFAULT = our champion brain, so the competition's
-                          // pGenRescue (no strategy param) runs it. The harness
-                          // still injects greedy/snake/random/champ1 explicitly.
+  m_strategy = "vor";     // DEFAULT = tournament champion (opponent-aware Voronoi
+                          // ordering: secure swimmers we're closer to than the
+                          // opponent FIRST, then mop up). Beat nn 5-0-1 and snake
+                          // 4-2 in the round-robin. Path-based -> works with the
+                          // standard BHV_Waypoint in the competition mission.
   m_cur_target_id = -1;   // dev: no committed target yet
 
   m_opp_set = false;
@@ -255,7 +257,10 @@ void GenRescue::planPath()
     m_plan_pending = false;
     return;
   }
-  if(m_strategy == "dev")         planDev();
+  if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
+  else if(m_strategy == "vor")    planVor();
+  else if(m_strategy == "cen")    planCen();
+  else if(m_strategy == "auc")    planAuc();
   else if(m_strategy == "champ1") planChamp1();  // frozen hall-of-fame opponent
   else if(m_strategy == "greedy") planGreedy();
   else if(m_strategy == "random") planRandom();
@@ -415,6 +420,81 @@ void GenRescue::planDevB()
   }
   XYPoint t = m_swimmers[m_cur_target_id];
   Notify("RESCUE_TGT", doubleToStringX(t.x(),2) + "," + doubleToStringX(t.y(),2));
+}
+
+//---------------------------------------------------------
+// TOURNAMENT contenders (frozen). Each is a complete strategy that competes
+// head-to-head against the others in the round-robin. nn == planDev.
+
+void GenRescue::planVor()   // opponent-aware: our-Voronoi swimmers first, then mop up
+{
+  std::vector<XYPoint> ours, theirs;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+    if(m_opp_set) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od) ours.push_back(p->second); else theirs.push_back(p->second);
+    } else ours.push_back(p->second);
+  }
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  for(int phase = 0; phase < 2; phase++) {
+    std::vector<XYPoint>& set = (phase==0) ? ours : theirs;
+    while(!set.empty()) {
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<set.size();i++){ double d=hypot(set[i].x()-cx,set[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=set[bi].x(); cy=set[bi].y(); path.add_vertex(cx,cy); set.erase(set.begin()+bi);
+    }
+  }
+  postPath(path);
+}
+
+void GenRescue::planCen()   // centrality-weighted NN
+{
+  const double W = 0.5;
+  std::vector<XYPoint> rem;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+    rem.push_back(p->second);
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  while(!rem.empty()) {
+    double sx=0, sy=0;
+    for(size_t i=0;i<rem.size();i++){ sx+=rem[i].x(); sy+=rem[i].y(); }
+    double gx=sx/rem.size(), gy=sy/rem.size();
+    size_t bi=0; double bs=-1;
+    for(size_t i=0;i<rem.size();i++){
+      double s=hypot(rem[i].x()-cx,rem[i].y()-cy)+W*hypot(rem[i].x()-gx,rem[i].y()-gy);
+      if(bs<0||s<bs){ bs=s; bi=i; }
+    }
+    cx=rem[bi].x(); cy=rem[bi].y(); path.add_vertex(cx,cy); rem.erase(rem.begin()+bi);
+  }
+  postPath(path);
+}
+
+void GenRescue::planAuc()   // auction/preemption: steal contested-winnable (bounded detour)
+{
+  const double THREAT = 40.0, STEAL_FACTOR = 1.3;
+  std::vector<XYPoint> rem;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+    rem.push_back(p->second);
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  while(!rem.empty()) {
+    double ndist=-1;
+    for(size_t i=0;i<rem.size();i++){ double d=hypot(rem[i].x()-cx,rem[i].y()-cy); if(ndist<0||d<ndist)ndist=d; }
+    size_t bi=0; double bd=-1; size_t ci=0; double cd=-1; bool contested=false;
+    for(size_t i=0;i<rem.size();i++){
+      double ud=hypot(rem[i].x()-cx,rem[i].y()-cy);
+      if(bd<0||ud<bd){ bd=ud; bi=i; }
+      if(m_opp_set){
+        double od=hypot(rem[i].x()-m_opp_x,rem[i].y()-m_opp_y);
+        if((ud<=od)&&(od<THREAT)&&(ud<=STEAL_FACTOR*ndist)){ if(cd<0||ud<cd){ cd=ud; ci=i; contested=true; } }
+      }
+    }
+    size_t pick = contested?ci:bi;
+    cx=rem[pick].x(); cy=rem[pick].y(); path.add_vertex(cx,cy); rem.erase(rem.begin()+pick);
+  }
+  postPath(path);
 }
 
 //---------------------------------------------------------
