@@ -39,6 +39,7 @@ class GenRescue : public AppCastingMOOSApp
   void planGreedy();             // frozen nearest-neighbour tour
   void planRandom();             // frozen random-points tour
   void planDev();                // evolving brain (autoresearch edits THIS)
+  void planDevB();               // PHASE 2: publishes RESCUE_TGT for the custom BHV_Rescue behaviour
   void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
   void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
   void postNullPath();

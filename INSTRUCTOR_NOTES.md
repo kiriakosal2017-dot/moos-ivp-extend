@@ -24,7 +24,14 @@ IvP objective toward it every tick, so re-targeting never restarts the boat.
 
 It is included and builds with the repo. To exercise it, a vehicle's `pGenRescue`
 is set to `strategy = devb` and its `.bhv` uses `Behavior = BHV_Rescue` with
-`IVP_BEHAVIOR_DIRS` (or `ivp_behavior_dir`) pointing at this repo's `lib/`. The
-default competition entry above does **not** depend on it — it's an additional
-piece of work, and I'm continuing to tune it to try to beat the waypoint-based
-version.
+`IVP_BEHAVIOR_DIRS` (or `ivp_behavior_dir`) pointing at this repo's `lib/`.
+
+In my own head-to-head testing (both boats swapping sides on identical swimmer
+fields), the behaviour version (`devb`) **outperformed** the waypoint version
+(`dev`): about a 0.56 win rate vs my reference panel {random, greedy, snake},
+compared to ~0.39 for the waypoint version — the gain is mostly against the
+sweeping ("snake") opponent. So if your Monte-Carlo builds my repo and can use my
+behaviour, `strategy = devb` + `BHV_Rescue` is my stronger entry. If it can only
+drop in `pGenRescue` against a fixed mission, the default `strategy = dev` (the
+nearest-neighbour collector on the standard `BHV_Waypoint`) is the safe entry that
+works anywhere.

@@ -49,4 +49,14 @@ TARGET_LINK_LIBRARIES(BHV_SimpleWaypoint
 #--------------------------------------------------------
 #                                      BHV_Rescue
 #--------------------------------------------------------
-ADD_BHV(BHV_Rescue)
+ADD_LIBRARY(BHV_Rescue SHARED BHV_Rescue.cpp AOF_SimpleWaypoint.cpp)
+TARGET_LINK_LIBRARIES(BHV_Rescue
+   helmivp
+   behaviors
+   ivpbuild
+   logic
+   ivpcore
+   bhvutil
+   mbutil
+   geometry
+   ${SYSTEM_LIBS} )

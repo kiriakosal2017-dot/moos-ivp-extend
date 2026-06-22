@@ -13,6 +13,8 @@
 #include "BuildUtils.h"
 #include "ZAIC_PEAK.h"
 #include "OF_Coupler.h"
+#include "OF_Reflector.h"
+#include "AOF_SimpleWaypoint.h"
 
 using namespace std;
 
@@ -79,35 +81,26 @@ IvPFunction *BHV_Rescue::onRunState()
   double tgtx = atof(sx.c_str());
   double tgty = atof(tgt.c_str());
 
-  // Speed objective: peak at desired speed.
-  ZAIC_PEAK spd_zaic(m_domain, "speed");
-  spd_zaic.setSummit(m_desired_speed);
-  spd_zaic.setPeakWidth(0.5);
-  spd_zaic.setBaseWidth(1.0);
-  spd_zaic.setSummitDelta(0.8);
-  if(spd_zaic.stateOK() == false) {
-    postWMessage("BHV_Rescue speed ZAIC: " + spd_zaic.getWarnings());
+  // Build a RICH coupled course+speed objective via the Reflector over an
+  // AOF_SimpleWaypoint (toward the target). This produces a fine 600x500 IvP
+  // function -- like BHV_Waypoint -- so it actually competes in the helm against
+  // the collision-avoidance (pwt 350) and op-region (pwt 300) behaviours. A
+  // coarse ZAIC-only function got out-voted and the boat sat still.
+  AOF_SimpleWaypoint aof(m_domain);
+  bool ok = true;
+  ok = ok && aof.setParam("desired_speed", m_desired_speed);
+  ok = ok && aof.setParam("osx", m_osx);
+  ok = ok && aof.setParam("osy", m_osy);
+  ok = ok && aof.setParam("ptx", tgtx);
+  ok = ok && aof.setParam("pty", tgty);
+  ok = ok && aof.initialize();
+  if(!ok) {
+    postWMessage("BHV_Rescue: AOF_SimpleWaypoint init failed.");
     return(0);
   }
-
-  // Course objective: peak at the bearing to the target.
-  double ang = relAng(m_osx, m_osy, tgtx, tgty);
-  ZAIC_PEAK crs_zaic(m_domain, "course");
-  crs_zaic.setSummit(ang);
-  crs_zaic.setPeakWidth(0);
-  crs_zaic.setBaseWidth(180.0);
-  crs_zaic.setSummitDelta(0);
-  crs_zaic.setValueWrap(true);
-  if(crs_zaic.stateOK() == false) {
-    postWMessage("BHV_Rescue course ZAIC: " + crs_zaic.getWarnings());
-    return(0);
-  }
-
-  IvPFunction *spd_ipf = spd_zaic.extractIvPFunction();
-  IvPFunction *crs_ipf = crs_zaic.extractIvPFunction();
-
-  OF_Coupler coupler;
-  IvPFunction *ipf = coupler.couple(crs_ipf, spd_ipf, 50, 50);
+  OF_Reflector reflector(&aof);
+  reflector.create(600, 500);
+  IvPFunction *ipf = reflector.extractIvPFunction();
   if(ipf)
     ipf->setPWT(m_priority_wt);
   return(ipf);

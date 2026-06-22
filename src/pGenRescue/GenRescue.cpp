@@ -118,10 +118,13 @@ bool GenRescue::Iterate()
   // path is a fixed snake, so we must NOT re-post periodically -- updating
   // points resets the behaviour to vertex 0, which at a 15s cadence would
   // restart the boat before it gets anywhere.
-  // Re-plan (post a fresh waypoint path) only when the swimmer set changed -- a
-  // new alert. Re-posting resets BHV_Waypoint to vertex 0, so we must not do it
-  // every tick. (greedy/snake rescue ~12 with exactly this cadence.)
-  if(have_nav && m_plan_pending)
+  // devb (PHASE 2) is REACTIVE: republish RESCUE_TGT every tick for the custom
+  // BHV_Rescue behaviour (no waypoint index -> no thrash). All other strategies
+  // post a fresh waypoint path only when the swimmer set changed (a new alert);
+  // re-posting resets BHV_Waypoint to vertex 0 so we must not do it every tick.
+  if(have_nav && m_strategy == "devb")
+    planDevB();
+  else if(have_nav && m_plan_pending)
     planPath();
 
   AppCastingMOOSApp::PostReport();
@@ -385,6 +388,33 @@ void GenRescue::planDev()
     rem.erase(rem.begin() + bi);
   }
   postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planDevB()
+//   PHASE 2: feed the custom BHV_Rescue behaviour. Publish a single target point
+//   RESCUE_TGT="x,y" and commit to it until rescued so the boat doesn't oscillate.
+
+void GenRescue::planDevB()
+{
+  if(!m_nav_x_set || !m_nav_y_set)
+    return;
+  if(m_swimmers.empty()) {
+    Notify("RESCUE_TGT", "");
+    m_cur_target_id = -1;
+    return;
+  }
+  if((m_cur_target_id < 0) || (m_swimmers.count(m_cur_target_id) == 0)) {
+    double bestd = -1; int bid = -1;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+        p != m_swimmers.end(); p++) {
+      double d = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      if(bestd < 0 || d < bestd) { bestd = d; bid = p->first; }
+    }
+    m_cur_target_id = bid;
+  }
+  XYPoint t = m_swimmers[m_cur_target_id];
+  Notify("RESCUE_TGT", doubleToStringX(t.x(),2) + "," + doubleToStringX(t.y(),2));
 }
 
 //---------------------------------------------------------
