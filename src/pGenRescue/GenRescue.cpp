@@ -200,14 +200,17 @@ bool GenRescue::handleMailFoundSwimmer(string str)
   if(m_swimmers.count(id)) {
     m_swimmers.erase(id);   // drop the rescued swimmer from bookkeeping
     m_rescued_count++;
-    // NOTE: deliberately do NOT re-plan here. Re-posting SURVEY_UPDATE resets
-    // BHV_Waypoint's index to vertex 0 (the bottom lane), so re-planning on
-    // every rescue kept yanking the boat back to the bottom -- it yo-yo'd in
-    // the lower lanes and never reached the top-edge swimmers (all 5 misses on
-    // athens_02 had y in [-10,-2], the LAST lane). One uninterrupted snake from
-    // bottom to top fits easily in the time budget (~500m path vs 1.2 m/s x
-    // ~1140s). Keeping the erase (above) lets m_swimmers empty out when all are
-    // rescued, which releases the RETURN guard so the boat heads home cleanly.
+    // NOTE: deliberately do NOT re-plan here for snake/greedy/random. Re-posting
+    // SURVEY_UPDATE resets BHV_Waypoint's index to vertex 0 (the bottom lane),
+    // so re-planning on every rescue kept yanking the boat back to the bottom --
+    // it yo-yo'd in the lower lanes and never reached the top-edge swimmers (all
+    // 5 misses on athens_02 had y in [-10,-2], the LAST lane). One uninterrupted
+    // snake from bottom to top fits easily in the time budget (~500m path vs
+    // 1.2 m/s x ~1140s). Keeping the erase (above) lets m_swimmers empty out
+    // when all are rescued, which releases the RETURN guard so the boat heads
+    // home cleanly.
+    if(m_strategy == "dev")
+      m_plan_pending = true;   // field changed → dev re-plans; frozen snake does not
   }
   return(true);
 }
@@ -336,7 +339,49 @@ void GenRescue::planRandom()
   postPath(path);
 }
 
-void GenRescue::planDev()    { planSnake(); }  // replaced in Task 4
+void GenRescue::planDev()
+{
+  // Step A: partition swimmers into "claimed" (we are at least as close as the
+  // opponent, minus a steal threshold) vs conceded. If we have no opponent fix
+  // yet, claim everything.
+  const double steal = 8.0;   // metres; tunable by the autoresearch loop
+  std::vector<XYPoint> claimed;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+      p != m_swimmers.end(); p++) {
+    double our_d = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+    bool mine = true;
+    if(m_opp_set) {
+      double opp_d = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      mine = (our_d <= opp_d + steal);
+    }
+    if(mine) claimed.push_back(p->second);
+  }
+  // Fallback: if we conceded everything, take the single nearest so we never idle.
+  if(claimed.empty()) {
+    double bestd = -1; XYPoint best;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+        p != m_swimmers.end(); p++) {
+      double d = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      if(bestd < 0 || d < bestd) { bestd = d; best = p->second; }
+    }
+    claimed.push_back(best);
+  }
+
+  // Step B: nearest-neighbour tour over the claimed set from ownship.
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  while(!claimed.empty()) {
+    size_t bi = 0; double bd = -1;
+    for(size_t i = 0; i < claimed.size(); i++) {
+      double d = hypot(claimed[i].x()-cx, claimed[i].y()-cy);
+      if(bd < 0 || d < bd) { bd = d; bi = i; }
+    }
+    cx = claimed[bi].x(); cy = claimed[bi].y();
+    path.add_vertex(cx, cy);
+    claimed.erase(claimed.begin() + bi);
+  }
+  postPath(path);
+}
 
 //---------------------------------------------------------
 // Procedure: postNullPath()
