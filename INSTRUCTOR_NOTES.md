@@ -27,11 +27,11 @@ is set to `strategy = devb` and its `.bhv` uses `Behavior = BHV_Rescue` with
 `IVP_BEHAVIOR_DIRS` (or `ivp_behavior_dir`) pointing at this repo's `lib/`.
 
 In my own head-to-head testing (both boats swapping sides on identical swimmer
-fields), the behaviour version (`devb`) **outperformed** the waypoint version
-(`dev`): about a 0.56 win rate vs my reference panel {random, greedy, snake},
-compared to ~0.39 for the waypoint version — the gain is mostly against the
-sweeping ("snake") opponent. So if your Monte-Carlo builds my repo and can use my
-behaviour, `strategy = devb` + `BHV_Rescue` is my stronger entry. If it can only
-drop in `pGenRescue` against a fixed mission, the default `strategy = dev` (the
-nearest-neighbour collector on the standard `BHV_Waypoint`) is the safe entry that
-works anywhere.
+fields), the behaviour version (`devb`) and the waypoint version (`dev`) are
+close, with the waypoint NN collector slightly ahead on the larger sample
+(win rate ~0.63 vs ~0.57 over 30 games per side vs my reference panel
+{random, greedy, snake}). So my entry is the default **`strategy = dev`** (the
+nearest-neighbour collector on the standard `BHV_Waypoint`), which also has the
+advantage of working in any mission without my behaviour. `BHV_Rescue` /
+`strategy = devb` is included as an alternative implementation that performs
+comparably; I'm leaving it in the repo as part of the work.
