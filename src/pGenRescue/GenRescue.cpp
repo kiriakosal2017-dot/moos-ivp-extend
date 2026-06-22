@@ -9,6 +9,7 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <unistd.h>
 #include "GenRescue.h"
 #include "MBUtils.h"
 #include "ColorParse.h"
@@ -38,6 +39,8 @@ GenRescue::GenRescue()
 
   m_last_plan_time  = 0;
   m_replan_interval = 15;   // game-seconds between forced re-plans
+
+  srand((unsigned)getpid());   // distinct random tours per vehicle process
 }
 
 //---------------------------------------------------------
@@ -272,8 +275,44 @@ void GenRescue::planSnake()
 //---------------------------------------------------------
 // Procedure stubs: planGreedy(), planRandom(), planDev()
 
-void GenRescue::planGreedy() { planSnake(); }  // replaced in Task 2
-void GenRescue::planRandom() { planSnake(); }  // replaced in Task 2
+void GenRescue::planGreedy()
+{
+  std::vector<XYPoint> remaining;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+      p != m_swimmers.end(); p++)
+    remaining.push_back(p->second);
+
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  while(!remaining.empty()) {
+    size_t best = 0; double bestd = -1;
+    for(size_t i = 0; i < remaining.size(); i++) {
+      double d = hypot(remaining[i].x() - cx, remaining[i].y() - cy);
+      if(bestd < 0 || d < bestd) { bestd = d; best = i; }
+    }
+    cx = remaining[best].x(); cy = remaining[best].y();
+    path.add_vertex(cx, cy);
+    remaining.erase(remaining.begin() + best);
+  }
+  postPath(path);
+}
+
+void GenRescue::planRandom()
+{
+  std::vector<XYPoint> pts;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+      p != m_swimmers.end(); p++)
+    pts.push_back(p->second);
+  for(size_t i = pts.size(); i > 1; i--) {   // Fisher-Yates
+    size_t j = (size_t)(rand() % i);
+    std::swap(pts[i-1], pts[j]);
+  }
+  XYSegList path;
+  for(size_t i = 0; i < pts.size(); i++)
+    path.add_vertex(pts[i].x(), pts[i].y());
+  postPath(path);
+}
+
 void GenRescue::planDev()    { planSnake(); }  // replaced in Task 4
 
 //---------------------------------------------------------
