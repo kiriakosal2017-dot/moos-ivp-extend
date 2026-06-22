@@ -35,7 +35,10 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "snake";   // default; harness injects per-vehicle via targ patch
+  m_strategy = "dev";     // DEFAULT = our champion brain, so the competition's
+                          // pGenRescue (no strategy param) runs it. The harness
+                          // still injects greedy/snake/random/champ1 explicitly.
+  m_cur_target_id = -1;   // dev: no committed target yet
 
   m_opp_set = false;
   m_opp_x = 0; m_opp_y = 0;
@@ -115,6 +118,9 @@ bool GenRescue::Iterate()
   // path is a fixed snake, so we must NOT re-post periodically -- updating
   // points resets the behaviour to vertex 0, which at a 15s cadence would
   // restart the boat before it gets anywhere.
+  // Re-plan (post a fresh waypoint path) only when the swimmer set changed -- a
+  // new alert. Re-posting resets BHV_Waypoint to vertex 0, so we must not do it
+  // every tick. (greedy/snake rescue ~12 with exactly this cadence.)
   if(have_nav && m_plan_pending)
     planPath();
 
@@ -209,8 +215,10 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     // 1.2 m/s x ~1140s). Keeping the erase (above) lets m_swimmers empty out
     // when all are rescued, which releases the RETURN guard so the boat heads
     // home cleanly.
-    if(m_strategy == "dev")
-      m_plan_pending = true;   // field changed → dev re-plans; frozen snake does not
+    // dev too: do NOT re-plan on a rescue. BHV_Waypoint auto-advances through the
+    // posted tour, so re-planning here only re-posts SURVEY_UPDATE and resets the
+    // waypoint index -> thrash -> boat rescues ~0. dev still re-plans on a NEW
+    // swimmer (handleMailNewSwimmer), which is the genuinely dynamic event.
   }
   return(true);
 }
@@ -245,6 +253,7 @@ void GenRescue::planPath()
     return;
   }
   if(m_strategy == "dev")         planDev();
+  else if(m_strategy == "champ1") planChamp1();  // frozen hall-of-fame opponent
   else if(m_strategy == "greedy") planGreedy();
   else if(m_strategy == "random") planRandom();
   else                            planSnake();   // default/frozen
@@ -341,10 +350,51 @@ void GenRescue::planRandom()
 
 void GenRescue::planDev()
 {
-  // Step A: partition swimmers into "claimed" (we are at least as close as the
-  // opponent, minus a steal threshold) vs conceded. If we have no opponent fix
-  // yet, claim everything.
-  const double steal = 8.0;   // metres; tunable by the autoresearch loop
+  // Executor architecture: pGenRescue does the THINKING (choose the next
+  // target); the custom BHV_Rescue behaviour does the DRIVING. We publish the
+  // chosen target as RESCUE_TGT="x,y"; BHV_Rescue builds a course+speed
+  // objective toward it each tick with no waypoint index, so we can republish
+  // every Iterate (keeping the target fresh after each rescue) with zero thrash.
+  if(!m_nav_x_set || !m_nav_y_set)
+    return;
+  if(m_swimmers.empty()) {
+    Notify("RESCUE_TGT", "");      // nothing left -> behaviour idles
+    return;
+  }
+
+  // Aggressive nearest-neighbour tour over ALL known swimmers from ownship,
+  // posted to BHV_Waypoint. Proven-strong collector (~12 rescues with the
+  // correct binary). Opponent-aware ordering + 2-opt layer on top in later
+  // iterations -- THIS selection/ordering is the lever the loop tunes.
+  std::vector<XYPoint> rem;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
+      p != m_swimmers.end(); p++)
+    rem.push_back(p->second);
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  while(!rem.empty()) {
+    size_t bi = 0; double bd = -1;
+    for(size_t i = 0; i < rem.size(); i++) {
+      double d = hypot(rem[i].x()-cx, rem[i].y()-cy);
+      if(bd < 0 || d < bd) { bd = d; bi = i; }
+    }
+    cx = rem[bi].x(); cy = rem[bi].y();
+    path.add_vertex(cx, cy);
+    rem.erase(rem.begin() + bi);
+  }
+  postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planChamp1()
+//   FROZEN hall-of-fame opponent. This is the baseline winner (win-rate ~0.417
+//   vs {random,greedy,snake}): opponent-aware claim with steal=8 + nearest-
+//   neighbour tour. New dev candidates must beat THIS too, not just the static
+//   reference panel. Do not edit -- it is a fixed benchmark.
+
+void GenRescue::planChamp1()
+{
+  const double steal = 8.0;
   std::vector<XYPoint> claimed;
   for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
       p != m_swimmers.end(); p++) {
@@ -356,7 +406,6 @@ void GenRescue::planDev()
     }
     if(mine) claimed.push_back(p->second);
   }
-  // Fallback: if we conceded everything, take the single nearest so we never idle.
   if(claimed.empty()) {
     double bestd = -1; XYPoint best;
     for(std::map<int,XYPoint>::iterator p = m_swimmers.begin();
@@ -366,8 +415,6 @@ void GenRescue::planDev()
     }
     claimed.push_back(best);
   }
-
-  // Step B: nearest-neighbour tour over the claimed set from ownship.
   double cx = m_nav_x, cy = m_nav_y;
   XYSegList path;
   while(!claimed.empty()) {

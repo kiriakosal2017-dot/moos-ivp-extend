@@ -39,12 +39,14 @@ class GenRescue : public AppCastingMOOSApp
   void planGreedy();             // frozen nearest-neighbour tour
   void planRandom();             // frozen random-points tour
   void planDev();                // evolving brain (autoresearch edits THIS)
+  void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
   void postPath(const XYSegList& path);  // shared: VIEW_SEGLIST + SURVEY_UPDATE
   void postNullPath();
 
  private: // Config variables
   std::string m_vname;
-  std::string m_strategy;        // "dev" | "random" | "greedy" | "snake"
+  std::string m_strategy;        // "dev" | "random" | "greedy" | "snake" | "champ1"
+  int         m_cur_target_id;   // dev: committed rescue target id (-1 = none)
   
  private: // State variables
   XYSegList  m_path;

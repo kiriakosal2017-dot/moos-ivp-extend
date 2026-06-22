@@ -64,3 +64,7 @@ lib/
 
 # macOS
 .DS_Store
+
+# Local autoresearch harness (not part of the deliverable)
+autoresearch/
+autoresearch_adv/

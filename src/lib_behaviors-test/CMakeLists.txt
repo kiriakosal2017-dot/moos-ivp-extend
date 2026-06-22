@@ -33,15 +33,20 @@ ENDMACRO(ADD_BHV)
 #--------------------------------------------------------
 #                                      BHV_SimpleWaypoint
 #--------------------------------------------------------
-ADD_LIBRARY(BHV_SimpleWaypoint SHARED 
+ADD_LIBRARY(BHV_SimpleWaypoint SHARED
    BHV_SimpleWaypoint.cpp AOF_SimpleWaypoint.cpp)
 TARGET_LINK_LIBRARIES(BHV_SimpleWaypoint
    helmivp
-   behaviors 
-   ivpbuild 
-   logic 
-   ivpcore 
-   bhvutil 
-   mbutil 
-   geometry 
+   behaviors
+   ivpbuild
+   logic
+   ivpcore
+   bhvutil
+   mbutil
+   geometry
    ${SYSTEM_LIBS} )
+
+#--------------------------------------------------------
+#                                      BHV_Rescue
+#--------------------------------------------------------
+ADD_BHV(BHV_Rescue)
