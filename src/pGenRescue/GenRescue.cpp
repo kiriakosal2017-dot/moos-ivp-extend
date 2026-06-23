@@ -55,7 +55,7 @@ GenRescue::GenRescue()
   srand((unsigned) getpid());          // distinct RNG per match process
 
   m_opp_set = false;
-  m_opp_x = 0; m_opp_y = 0;
+  m_opp_x = 0; m_opp_y = 0; m_opp_hdg = 0;
 
   m_last_plan_time  = 0;
   m_replan_interval = 15;   // game-seconds between forced re-plans
@@ -265,7 +265,7 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     if(m_strategy=="nn"  || m_strategy=="dev" || m_strategy=="vor" ||
        m_strategy=="vorx"|| m_strategy=="vori"|| m_strategy=="cen" ||
        m_strategy=="auc" || m_strategy=="claim"|| m_strategy=="skip"||
-       m_strategy=="greedy")
+       m_strategy=="dodge"|| m_strategy=="greedy")
       m_plan_pending = true;
   }
   return(true);
@@ -285,6 +285,9 @@ bool GenRescue::handleMailNodeReport(string str)
   if(name == m_vname)   // ignore our own relayed report
     return(true);
   m_opp_name = name; m_opp_x = x; m_opp_y = y; m_opp_set = true;
+  double hdg = 0;       // opponent heading (for dodge); keep last value if absent
+  if(tokParse(str, "HDG", ',', '=', hdg))
+    m_opp_hdg = hdg;
   return(true);
 }
 
@@ -303,6 +306,7 @@ void GenRescue::planPath()
   if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
   else if(m_strategy == "claim")  planClaim();
   else if(m_strategy == "skip")   planSkip();
+  else if(m_strategy == "dodge")  planDodge();
   else if(m_strategy == "adapt")  planAdapt();
   else if(m_strategy == "vor")    planVor();
   else if(m_strategy == "vorx")   planVorx();
@@ -528,6 +532,47 @@ void GenRescue::planSkip()
   XYSegList path;
   for(int ph=0; ph<2; ph++) {                  // phase 0 = winnable (nn), phase 1 = conceded mop-up
     std::vector<XYPoint>& s = (ph==0) ? win : lost;
+    while(!s.empty()) {
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<s.size();i++){ double d=hypot(s[i].x()-cx,s[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=s[bi].x(); cy=s[bi].y(); path.add_vertex(cx,cy); s.erase(s.begin()+bi);
+    }
+  }
+  postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planDodge()
+//   LIVE direction-aware avoidance ("go where they aren't"). Uses the opponent's
+//   HEADING (from NODE_REPORT), not just position: a swimmer is "theirs" if it sits
+//   inside the opponent's forward cone (heading-alignment > 0.5, i.e. within ~60 deg
+//   of straight ahead of them) AND they are not clearly farther from it than us.
+//   We take everything ELSE first (uncontested -> near-guaranteed claims), greedy
+//   from ownship, then mop up the conceded cone. Re-evaluated on every rescue, so it
+//   tracks where the opponent is actually going. Falls back to plain greedy when the
+//   opponent isn't seen yet.
+
+void GenRescue::planDodge()
+{
+  std::vector<XYPoint> ours, theirs;
+  double hr = m_opp_hdg * M_PI / 180.0;
+  double hx = sin(hr), hy = cos(hr);          // MOOS heading unit vector (0=N=+y, 90=E=+x)
+  for(std::map<int,XYPoint>::iterator p=m_swimmers.begin(); p!=m_swimmers.end(); p++) {
+    bool concede = false;
+    if(m_opp_set) {
+      double dx = p->second.x()-m_opp_x, dy = p->second.y()-m_opp_y;
+      double od = hypot(dx,dy);
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double align = (od>1e-6) ? (hx*dx + hy*dy)/od : -1;   // cos(angle between opp heading & opp->swimmer)
+      if(align > 0.5 && od < ud + 10.0)        // in their forward cone AND they can reach it ~first
+        concede = true;
+    }
+    if(concede) theirs.push_back(p->second); else ours.push_back(p->second);
+  }
+  double cx=m_nav_x, cy=m_nav_y;
+  XYSegList path;
+  for(int ph=0; ph<2; ph++) {                  // phase 0 = outside their path, phase 1 = conceded cone
+    std::vector<XYPoint>& s = (ph==0) ? ours : theirs;
     while(!s.empty()) {
       size_t bi=0; double bd=-1;
       for(size_t i=0;i<s.size();i++){ double d=hypot(s[i].x()-cx,s[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }

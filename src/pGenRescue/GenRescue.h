@@ -45,6 +45,7 @@ class GenRescue : public AppCastingMOOSApp
   void planAdapt();              // ROBUST: detect clustering (mean-NN dist) -> greedy(nn) if clustered, snake if spread
   void planClaim();              // CONTESTED-RACE champion: opponent-aware front-loaded greedy + max speed, re-planned on every claim
   void planSkip();               // LIGHT opponent-aware: plain nn but defer ONLY clearly-lost swimmers (opp >25m closer) to last
+  void planDodge();              // LIVE direction-aware: take swimmers OUTSIDE the opponent's heading cone first (go where they aren't)
   void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
   // --- TOURNAMENT contenders (frozen; compete round-robin against each other) ---
   // nn == planDev (aggressive nearest-neighbour collector, current champion)
@@ -91,6 +92,7 @@ class GenRescue : public AppCastingMOOSApp
   bool        m_opp_set;
   double      m_opp_x;
   double      m_opp_y;
+  double      m_opp_hdg;          // opponent heading (deg, MOOS 0=N) from NODE_REPORT -- for dodge
   std::string m_opp_name;
 
   // Periodic re-plan throttle. We re-issue the survey path every
