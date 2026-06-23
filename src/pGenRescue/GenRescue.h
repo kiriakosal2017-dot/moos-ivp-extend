@@ -43,6 +43,7 @@ class GenRescue : public AppCastingMOOSApp
   void planHunt();               // ADVERSARY: reactively steal the swimmer the opponent is going for
   void planAdapt();              // ROBUST: detect clustering (mean-NN dist) -> greedy(nn) if clustered, snake if spread
   void planClaim();              // CONTESTED-RACE champion: opponent-aware front-loaded greedy + max speed, re-planned on every claim
+  void planSkip();               // LIGHT opponent-aware: plain nn but defer ONLY clearly-lost swimmers (opp >25m closer) to last
   void planChamp1();             // FROZEN hall-of-fame: baseline winner (NN tour + claim steal=8, wr~0.417)
   // --- TOURNAMENT contenders (frozen; compete round-robin against each other) ---
   // nn == planDev (aggressive nearest-neighbour collector, current champion)
@@ -67,6 +68,7 @@ class GenRescue : public AppCastingMOOSApp
   int         m_snk_dir;         // snk_rand: chosen sweep direction (-1=unset, 0/1)
   int         m_snk_xflip;       // snk_rand: chosen x-direction flip (0/1)
   double      m_transit_speed;   // waypoint speed posted in SURVEY_UPDATE (helm-domain max = 1.6, vs stem default 1.2)
+  double      m_crs_spd_ratio;   // optional crs_spd_zaic_ratio override posted in SURVEY_UPDATE (0 = leave bhv default 85)
   
  private: // State variables
   XYSegList  m_path;

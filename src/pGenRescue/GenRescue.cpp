@@ -51,6 +51,7 @@ GenRescue::GenRescue()
   m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
   m_transit_speed = 1.6;               // helm-domain max (domain speed:0:1.6); stem bhv default is 1.2
+  m_crs_spd_ratio = 0;                 // 0 = don't override bhv's crs_spd_zaic_ratio (85); >0 = post it
   srand((unsigned) getpid());          // distinct RNG per match process
 
   m_opp_set = false;
@@ -165,6 +166,8 @@ bool GenRescue::OnStartUp()
       m_vname = value;
     else if(param == "strategy")
       m_strategy = tolower(value);
+    else if(param == "crs_spd_ratio")
+      m_crs_spd_ratio = atof(value.c_str());
   }
   
   RegisterVariables();	
@@ -242,7 +245,7 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     // the opponent just stole (else it drives to an empty spot). Safe here because
     // claim re-builds a greedy tour FROM ownship: vertex 0 is always the nearest
     // live swimmer ahead, so re-posting never yanks the boat backward.
-    if(m_strategy == "claim")
+    if(m_strategy == "claim" || m_strategy == "skip")
       m_plan_pending = true;
   }
   return(true);
@@ -279,6 +282,7 @@ void GenRescue::planPath()
   }
   if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
   else if(m_strategy == "claim")  planClaim();
+  else if(m_strategy == "skip")   planSkip();
   else if(m_strategy == "adapt")  planAdapt();
   else if(m_strategy == "vor")    planVor();
   else if(m_strategy == "vorx")   planVorx();
@@ -310,8 +314,14 @@ void GenRescue::postPath(const XYSegList& path)
   // command -- a free ~33% boost to collection rate in a race that ends when the
   // field is empty. Sent as a BHV_Waypoint update ('#'-separated params) next to
   // the points, so the same SURVEY_UPDATE sets both the tour and its speed.
-  string upd = "speed=" + doubleToStringX(m_transit_speed,2) +
-               " # points = " + m_path.get_spec_pts();
+  // Optionally also override crs_spd_zaic_ratio: the stem bhv uses 85 (heavy course
+  // weight), which makes the boat slow down to turn accurately at sharp greedy-tour
+  // corners. A lower ratio keeps more speed through turns (faster collection) at the
+  // cost of slightly wider corners. Tunable via config (crs_spd_ratio); 0 = leave 85.
+  string upd = "speed=" + doubleToStringX(m_transit_speed,2);
+  if(m_crs_spd_ratio > 0)
+    upd += " # crs_spd_zaic_ratio=" + doubleToStringX(m_crs_spd_ratio,0);
+  upd += " # points = " + m_path.get_spec_pts();
   Notify("SURVEY_UPDATE", upd);
   reportEvent("SURVEY_UPDATE " + upd);
 }
@@ -467,6 +477,41 @@ void GenRescue::planClaim()
       size_t bi=0; double bd=-1;
       for(size_t i=0;i<set.size();i++){ double d=hypot(set[i].x()-cx,set[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
       cx=set[bi].x(); cy=set[bi].y(); path.add_vertex(cx,cy); set.erase(set.begin()+bi);
+    }
+  }
+  postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planSkip()
+//   LIGHT opponent-awareness. Plain nn greedy tour, EXCEPT swimmers the opponent is
+//   MUCH closer to (our_dist > opp_dist + CONCEDE) are deferred to a final mop-up
+//   pass instead of chased -- they'd almost certainly be claimed before we arrive
+//   (wasted trip). The concede margin is WIDE (25m) so we give up only sure losses
+//   deep in the opponent's territory; everything contested-or-ours stays in the
+//   efficient first pass, so the tour is ~as short as pure nn (unlike vor/claim,
+//   which re-partition aggressively and backtrack). Re-planned on every claim.
+
+void GenRescue::planSkip()
+{
+  const double CONCEDE = 25.0;
+  std::vector<XYPoint> win, lost;
+  for(std::map<int,XYPoint>::iterator p=m_swimmers.begin(); p!=m_swimmers.end(); p++) {
+    if(m_opp_set) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud > od + CONCEDE) { lost.push_back(p->second); continue; }
+    }
+    win.push_back(p->second);
+  }
+  double cx=m_nav_x, cy=m_nav_y;
+  XYSegList path;
+  for(int ph=0; ph<2; ph++) {                  // phase 0 = winnable (nn), phase 1 = conceded mop-up
+    std::vector<XYPoint>& s = (ph==0) ? win : lost;
+    while(!s.empty()) {
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<s.size();i++){ double d=hypot(s[i].x()-cx,s[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=s[bi].x(); cy=s[bi].y(); path.add_vertex(cx,cy); s.erase(s.begin()+bi);
     }
   }
   postPath(path);
