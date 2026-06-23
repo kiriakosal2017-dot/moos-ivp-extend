@@ -11,6 +11,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set>
 #include "MOOS/libMOOS/Thirdparty/AppCasting/AppCastingMOOSApp.h"
 #include "XYPoint.h"
 #include "XYPolygon.h"
@@ -82,6 +83,7 @@ class GenRescue : public AppCastingMOOSApp
   // a RESCUED/FOUND swimmer is erased. m_plan_pending forces a re-plan
   // whenever this set changes.
   std::map<int, XYPoint> m_swimmers;
+  std::set<int>          m_done;          // ids already rescued (by either boat) -- ignore re-broadcast SWIMMER_ALERTs for these
   bool                   m_plan_pending;
   unsigned int           m_rescued_count;
 
