@@ -35,16 +35,22 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "adapt";   // DEFAULT = ROBUST champion. The best strategy depends on
-                          // how swimmers are distributed: snake (sweep) wins on
-                          // UNIFORM fields, greedy-NN wins on CLUSTERED fields.
-                          // adapt detects clustering (mean-NN distance) and picks
-                          // the right one -> top-tier in BOTH (uniform 12=snake,
-                          // clustered 7~nn) while snake/nn each collapse in the
-                          // other regime. Path-based -> standard BHV_Waypoint.
+  m_strategy = "nn";      // DEFAULT = efficient nearest-neighbour collector + MAX SPEED.
+                          // The real competition launches the two boats FAR APART, so
+                          // there is NO early COLREGS -- the game reduces to "who collects
+                          // their share fastest" = pure efficiency. nn's greedy tour is
+                          // ~40% shorter than snake's lawnmower (deterministic path-length
+                          // analysis) and front-loads nearby swimmers (best for a claiming
+                          // race); postPath() drives it at the helm-domain max 1.6 (vs the
+                          // stem bhv's 1.2) for a further +33% rate. The earlier "snake is
+                          // champion" was an ARTIFACT of the harness starting both boats ~7m
+                          // apart, which forced a fake head-on COLREGS that penalized fast
+                          // racers and favored lane-sweeps; it does not happen with far
+                          // starts. Path-based -> standard BHV_Waypoint, deliverable-safe.
   m_cur_target_id = -1;   // dev: no committed target yet
   m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
+  m_transit_speed = 1.6;               // helm-domain max (domain speed:0:1.6); stem bhv default is 1.2
   srand((unsigned) getpid());          // distinct RNG per match process
 
   m_opp_set = false;
@@ -231,6 +237,13 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     // posted tour, so re-planning here only re-posts SURVEY_UPDATE and resets the
     // waypoint index -> thrash -> boat rescues ~0. dev still re-plans on a NEW
     // swimmer (handleMailNewSwimmer), which is the genuinely dynamic event.
+    //
+    // EXCEPTION: 'claim' WANTS to re-plan on every claim -- it must skip swimmers
+    // the opponent just stole (else it drives to an empty spot). Safe here because
+    // claim re-builds a greedy tour FROM ownship: vertex 0 is always the nearest
+    // live swimmer ahead, so re-posting never yanks the boat backward.
+    if(m_strategy == "claim")
+      m_plan_pending = true;
   }
   return(true);
 }
@@ -265,6 +278,7 @@ void GenRescue::planPath()
     return;
   }
   if(m_strategy == "dev" || m_strategy == "nn") planDev();   // dev == nn (NN collector)
+  else if(m_strategy == "claim")  planClaim();
   else if(m_strategy == "adapt")  planAdapt();
   else if(m_strategy == "vor")    planVor();
   else if(m_strategy == "vorx")   planVorx();
@@ -291,8 +305,15 @@ void GenRescue::postPath(const XYSegList& path)
   m_path = path;
   m_path.set_label("one");
   Notify("VIEW_SEGLIST", m_path.get_spec());
-  Notify("SURVEY_UPDATE", "points = " + m_path.get_spec_pts());
-  reportEvent("SURVEY_UPDATE points=" + m_path.get_spec_pts());
+  // Drive at the helm-domain max speed instead of the stem behaviour's 1.2 m/s.
+  // The rescue helm domain is speed:0:1.6, so 1.6 is the fastest the helm can
+  // command -- a free ~33% boost to collection rate in a race that ends when the
+  // field is empty. Sent as a BHV_Waypoint update ('#'-separated params) next to
+  // the points, so the same SURVEY_UPDATE sets both the tour and its speed.
+  string upd = "speed=" + doubleToStringX(m_transit_speed,2) +
+               " # points = " + m_path.get_spec_pts();
+  Notify("SURVEY_UPDATE", upd);
+  reportEvent("SURVEY_UPDATE " + upd);
 }
 
 //---------------------------------------------------------
@@ -405,6 +426,48 @@ void GenRescue::planDev()
     cx = rem[bi].x(); cy = rem[bi].y();
     path.add_vertex(cx, cy);
     rem.erase(rem.begin() + bi);
+  }
+  postPath(path);
+}
+
+//---------------------------------------------------------
+// Procedure: planClaim()
+//   CONTESTED-RACE champion. The competition runs until the field is empty and
+//   every swimmer goes to whoever reaches it first, so the score is OUR claims,
+//   not total path length. Three levers, in order of impact:
+//     1) MAX SPEED  -- postPath() drives at the helm-domain max (1.6 vs the stem
+//        1.2), a free ~33% collection-rate boost.
+//     2) FRONT-LOAD -- greedy nearest-neighbour FROM ownship secures the easy,
+//        nearby claims first (a min-total-length 2-opt tour would defer nearby
+//        swimmers and let them get stolen; front-loading beats it in a race).
+//     3) OPPONENT-AWARE -- visit swimmers we can plausibly win first (our dist
+//        within a contest margin of the opponent's); concede only clearly-lost
+//        ones to the end (still collected if the opponent skips them).
+//   Re-planned on every swimmer-set change (new alert OR a claim by either boat;
+//   see handleMailFoundSwimmer) so we never drive to an already-rescued spot.
+//   Re-planning a greedy tour FROM ownship cannot thrash: vertex 0 is always the
+//   nearest live swimmer ahead, never a backward jump to vertex 0 of a fixed lane.
+
+void GenRescue::planClaim()
+{
+  const double margin = 10.0;   // contest the middle; concede only clearly-lost swimmers
+  std::vector<XYPoint> ours, theirs;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+    if(m_opp_set) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od + margin) ours.push_back(p->second); else theirs.push_back(p->second);
+    } else ours.push_back(p->second);
+  }
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  for(int phase = 0; phase < 2; phase++) {           // phase 0 = winnable, phase 1 = conceded mop-up
+    std::vector<XYPoint>& set = (phase==0) ? ours : theirs;
+    while(!set.empty()) {
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<set.size();i++){ double d=hypot(set[i].x()-cx,set[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=set[bi].x(); cy=set[bi].y(); path.add_vertex(cx,cy); set.erase(set.begin()+bi);
+    }
   }
   postPath(path);
 }
