@@ -35,18 +35,16 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "nn";      // DEFAULT = efficient nearest-neighbour collector + MAX SPEED.
-                          // The real competition launches the two boats FAR APART, so
-                          // there is NO early COLREGS -- the game reduces to "who collects
-                          // their share fastest" = pure efficiency. nn's greedy tour is
-                          // ~40% shorter than snake's lawnmower (deterministic path-length
-                          // analysis) and front-loads nearby swimmers (best for a claiming
-                          // race); postPath() drives it at the helm-domain max 1.6 (vs the
-                          // stem bhv's 1.2) for a further +33% rate. The earlier "snake is
-                          // champion" was an ARTIFACT of the harness starting both boats ~7m
-                          // apart, which forced a fake head-on COLREGS that penalized fast
-                          // racers and favored lane-sweeps; it does not happen with far
-                          // starts. Path-based -> standard BHV_Waypoint, deliverable-safe.
+  m_strategy = "vor";      // BRANCH VARIANT: opponent-aware Voronoi collector + MAX SPEED.
+                          // vor visits swimmers we are closer-to-than-the-opponent first
+                          // (separation -> the two boats split apart), then mops up the rest;
+                          // each phase is a greedy nearest-neighbour tour. postPath() drives
+                          // at the helm-domain max 1.6 (vs the stem bhv's 1.2). NOTE: in
+                          // far-start sim testing vor lost to plain nn (-10) -- with boats far
+                          // apart there is little contention, so the separation costs more
+                          // efficiency than it saves. This branch exists for head-to-head
+                          // on-water testing vs the nn default on main. Path-based -> standard
+                          // BHV_Waypoint, deliverable-safe.
   m_cur_target_id = -1;   // dev: no committed target yet
   m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
