@@ -203,8 +203,15 @@ bool GenRescue::handleMailNewSwimmer(string str)
     return(false);
 
   int id = (int)(id_d);
+  // IMPORTANT: uFldRescueMgr keeps RE-BROADCASTING every swimmer (incl. already-
+  // rescued ones) every few seconds. Without this guard, a re-broadcast of a
+  // rescued id is treated as brand-new -> re-added to m_swimmers -> the boat sails
+  // back to an empty spot AND it triggers a needless re-plan (waypoint thrash).
+  // Once an id is in m_done (rescued by either boat) it is gone for good -- ignore.
+  if(m_done.count(id))
+    return(true);
   // A brand-new swimmer id means the tour must be re-planned.
-  // (Re-broadcasts of a known id just refresh its position.)
+  // (Re-broadcasts of a known, still-active id just refresh its position.)
   if(m_swimmers.count(id) == 0)
     m_plan_pending = true;
   m_swimmers[id] = XYPoint(x, y);
@@ -222,6 +229,8 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     return(false);
 
   int id = (int)(id_d);
+  m_done.insert(id);        // permanently mark rescued (by either boat) so a later
+                            // re-broadcast SWIMMER_ALERT can't resurrect it
   if(m_swimmers.count(id)) {
     m_swimmers.erase(id);   // drop the rescued swimmer from bookkeeping
     m_rescued_count++;
@@ -243,7 +252,18 @@ bool GenRescue::handleMailFoundSwimmer(string str)
     // the opponent just stole (else it drives to an empty spot). Safe here because
     // claim re-builds a greedy tour FROM ownship: vertex 0 is always the nearest
     // live swimmer ahead, so re-posting never yanks the boat backward.
-    if(m_strategy == "claim" || m_strategy == "skip")
+    // Re-plan on every rescue (by either boat) for the greedy/Voronoi family so we
+    // DROP the just-rescued swimmer and never sail to an already-empty spot (the
+    // revisit bug). Safe for these because they build the tour FROM ownship, so the
+    // re-posted path's vertex 0 is always the nearest still-active swimmer ahead --
+    // never a backward jump. (Now that re-broadcast SWIMMER_ALERTs are ignored via
+    // m_done, this fires only on REAL rescues, not on every 15s re-broadcast.)
+    // NOT for snake/adapt: their fixed lane order resets to the bottom lane on a
+    // re-post -> yo-yo. They rely on one uninterrupted sweep instead.
+    if(m_strategy=="nn"  || m_strategy=="dev" || m_strategy=="vor" ||
+       m_strategy=="vorx"|| m_strategy=="vori"|| m_strategy=="cen" ||
+       m_strategy=="auc" || m_strategy=="claim"|| m_strategy=="skip"||
+       m_strategy=="greedy")
       m_plan_pending = true;
   }
   return(true);
