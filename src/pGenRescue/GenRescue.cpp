@@ -50,7 +50,7 @@ GenRescue::GenRescue()
   m_cur_target_id = -1;   // dev: no committed target yet
   m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
-  m_transit_speed = 1.6;               // helm-domain max (domain speed:0:1.6); stem bhv default is 1.2
+  m_transit_speed = 1.25;              // posted in SURVEY_UPDATE (helm domain allows up to 1.6; 1.6 drove the real boat ~2.7 m/s -> overshoot, so dialed back to 1.25)
   m_crs_spd_ratio = 0;                 // 0 = don't override bhv's crs_spd_zaic_ratio (85); >0 = post it
   srand((unsigned) getpid());          // distinct RNG per match process
 
