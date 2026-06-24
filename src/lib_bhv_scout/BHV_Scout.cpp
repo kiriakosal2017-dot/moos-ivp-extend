@@ -33,10 +33,11 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
 
   // All distances are in meters, all speed in meters per second
   // Default values for configuration parameters
-  m_desired_speed  = 1;
+  m_desired_speed  = 1.1;   // fixed: we tune the algorithm, not the speed
   m_capture_radius = 10;
 
   m_pt_set = false;
+  m_lawn_index = 0;
 
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
@@ -196,85 +197,123 @@ void BHV_Scout::updateScoutPoint()
   }
   m_rescue_region = region;
 
-  double best_x = 0;
-  double best_y = 0;
+  // Lawnmower coverage: follow a precomputed serpentine that sweeps the
+  // region but SKIPS the bands near registered swimmers (the rescue vehicle
+  // sweeps those itself). So we systematically cover the complement.
+  if(m_lawn_path.empty() && !m_swimmers.empty())
+    generateLawnPath();
 
-  // If we don't know any swimmers yet, fall back to a plain random point
-  // (this only happens in the first second, before the first alert burst).
-  if(m_swimmers.empty()) {
-    bool ok = randPointInPoly(m_rescue_region, best_x, best_y);
-    if(!ok) {
+  if(m_lawn_path.empty()) {
+    // Path not ready yet (swimmers not known); use a random point meanwhile.
+    double rx = 0, ry = 0;
+    if(!randPointInPoly(m_rescue_region, rx, ry)) {
       postWMessage("Unable to generate scout point");
       return;
     }
+    m_ptx = rx;
+    m_pty = ry;
+    m_pt_set = true;
+    return;
   }
-  else {
-    // Strategy (b): throw N random candidate points, keep the best one.
-    // score = (distance to nearest known swimmer) - w_near*(distance from me)
-    //   - high "distance to nearest swimmer" => deep in an empty gap, where
-    //     the rescue vehicle won't naturally go (so unregistered swimmers
-    //     hide there).
-    //   - subtracting w_near*(distance from me) discourages flying across the
-    //     whole map for a marginally emptier spot.
-    unsigned int num_candidates = 20;
-    double       w_near         = 0.5;
-    double       w_explore      = 0.5;
-    double       w_mate         = 1.0;
-    double       best_score     = -1e9;
 
-    for(unsigned int c=0; c<num_candidates; c++) {
-      double cx = 0, cy = 0;
-      if(!randPointInPoly(m_rescue_region, cx, cy))
-        continue;
+  // COOPERATION: the rescue rescues hidden swimmers it passes over, so any
+  // lawn point near its actual trail is already handled - skip it and move on
+  // to a point the rescue has NOT covered. (Real-time, via NODE_REPORT.)
+  double mate_clear = 12.0;
+  unsigned int checked = 0;
+  while(checked < m_lawn_path.size()) {
+    if(m_lawn_index >= m_lawn_path.size())
+      m_lawn_index = 0;          // wrap around and re-sweep
+    double lx = m_lawn_path[m_lawn_index].get_vx();
+    double ly = m_lawn_path[m_lawn_index].get_vy();
 
-      // distance from this candidate to the nearest known swimmer
-      double nearest = 1e9;
-      map<string, XYPoint>::iterator p;
-      for(p=m_swimmers.begin(); p!=m_swimmers.end(); p++) {
-        double d = hypot(cx - p->second.get_vx(), cy - p->second.get_vy());
-        if(d < nearest)
-          nearest = d;
+    bool covered = false;
+    for(unsigned int t=0; t<m_mate_trail.size(); t++) {
+      if(hypot(lx - m_mate_trail[t].get_vx(),
+               ly - m_mate_trail[t].get_vy()) < mate_clear) {
+        covered = true;
+        break;
       }
+    }
+    if(!covered)
+      break;                     // this point still needs us
+    m_lawn_index++;              // rescue already swept here - skip ahead
+    checked++;
+  }
 
-      // distance from this candidate to the nearest place we've already
-      // covered (big => unexplored area). 0 if we've been nowhere yet.
-      double nearest_visited = 1e9;
-      for(unsigned int v=0; v<m_visited.size(); v++) {
-        double dv = hypot(cx - m_visited[v].get_vx(), cy - m_visited[v].get_vy());
-        if(dv < nearest_visited)
-          nearest_visited = dv;
-      }
-      double explore = m_visited.empty() ? 0.0 : nearest_visited;
+  if(m_lawn_index >= m_lawn_path.size())
+    m_lawn_index = 0;
 
-      // distance from this candidate to the teammate's (rescue's) trail.
-      // Big => the rescue hasn't been there, so it's ours to cover.
-      double nearest_mate = 1e9;
-      for(unsigned int m=0; m<m_mate_trail.size(); m++) {
-        double dm = hypot(cx - m_mate_trail[m].get_vx(), cy - m_mate_trail[m].get_vy());
-        if(dm < nearest_mate)
-          nearest_mate = dm;
-      }
-      double mate_term = m_mate_trail.empty() ? 0.0 : nearest_mate;
+  m_ptx = m_lawn_path[m_lawn_index].get_vx();
+  m_pty = m_lawn_path[m_lawn_index].get_vy();
+  m_lawn_index++;
+  m_pt_set = true;
+  postEventMessage("Lawn " + uintToString(m_lawn_index) + "/" +
+                   uintToString((unsigned int)m_lawn_path.size()));
+}
 
-      double dist_from_me = hypot(cx - m_osx, cy - m_osy);
-      double score = nearest
-                   - (w_near    * dist_from_me)
-                   + (w_explore * explore)
-                   + (w_mate    * mate_term);
+//-----------------------------------------------------------
+// Procedure: lawnAccept() - keep a lawnmower point only if it is inside the
+//            region AND not within "clearance" of a registered swimmer
+//            (those areas the rescue vehicle covers on its own).
 
-      if(score > best_score) {
-        best_score = score;
-        best_x = cx;
-        best_y = cy;
-      }
+bool BHV_Scout::lawnAccept(double x, double y)
+{
+  // Keep every point inside the region. We cover the whole area and let the
+  // real-time abe-trail skip (in updateScoutPoint) handle what the rescue
+  // actually sweeps - a far more accurate filter than a static swimmer radius.
+  return m_rescue_region.contains(x, y);
+}
+
+//-----------------------------------------------------------
+// Procedure: generateLawnPath() - build a boustrophedon (back-and-forth)
+//            sweep over the region's bounding box, clipped to the complement
+//            of the registered-swimmer bands.
+
+void BHV_Scout::generateLawnPath()
+{
+  m_lawn_path.clear();
+  m_lawn_index = 0;
+
+  double minx = m_rescue_region.get_min_x();
+  double maxx = m_rescue_region.get_max_x();
+  double miny = m_rescue_region.get_min_y();
+  double maxy = m_rescue_region.get_max_y();
+
+  // Lane spacing MUST match the sensor swath (~6m), else we miss swimmers
+  // between lanes. 8m lanes give near-full coverage within the time budget.
+  double lane_gap = 8.0;   // spacing between sweep rows (m)
+  double step     = 10.0;  // sampling distance along each row (m)
+
+  int row = 0;
+  for(double y = miny + (lane_gap/2.0); y <= maxy; y += lane_gap) {
+    if((row % 2) == 0) {
+      for(double x = minx; x <= maxx; x += step)
+        if(lawnAccept(x, y))
+          m_lawn_path.push_back(XYPoint(x, y));
+    }
+    else {
+      for(double x = maxx; x >= minx; x -= step)
+        if(lawnAccept(x, y))
+          m_lawn_path.push_back(XYPoint(x, y));
+    }
+    row++;
+  }
+
+  // Start at the lawn point nearest the scout, to avoid a long transit to a
+  // far corner before any useful sweeping begins.
+  double bestd = 1e9;
+  for(unsigned int i=0; i<m_lawn_path.size(); i++) {
+    double d = hypot(m_lawn_path[i].get_vx() - m_osx,
+                     m_lawn_path[i].get_vy() - m_osy);
+    if(d < bestd) {
+      bestd = d;
+      m_lawn_index = i;
     }
   }
 
-  m_ptx = best_x;
-  m_pty = best_y;
-  m_pt_set = true;
-  string msg = "New pt: " + doubleToStringX(best_x) + "," + doubleToStringX(best_y);
-  postEventMessage(msg);
+  postEventMessage("Lawn path built: " +
+                   uintToString((unsigned int)m_lawn_path.size()) + " pts");
 }
 
 //-----------------------------------------------------------

@@ -43,6 +43,8 @@ public:
 protected:
   IvPFunction* buildFunction();
   void         updateScoutPoint();
+  void         generateLawnPath();
+  bool         lawnAccept(double x, double y);
   void         postViewPoint(bool viewable=true);
 
 protected: // State variables
@@ -64,6 +66,10 @@ protected: // State variables
 
   // Teammate (rescue) trail from NODE_REPORT - scout the complement of it.
   std::vector<XYPoint> m_mate_trail;
+
+  // Precomputed lawnmower sweep over the swimmer-sparse complement region.
+  std::vector<XYPoint> m_lawn_path;
+  unsigned int         m_lawn_index;
 
 protected: // Config variables
   double m_capture_radius;
