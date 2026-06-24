@@ -22,6 +22,7 @@ ADD_SUBDIRECTORY(pOdometry)
 ADD_SUBDIRECTORY(pPointAssign)
 ADD_SUBDIRECTORY(pGenPath)
 ADD_SUBDIRECTORY(pGenRescue)
+ADD_SUBDIRECTORY(lib_bhv_scout)
 ##############################################################################
 #                           END of CMakeLists.txt
 ##############################################################################
