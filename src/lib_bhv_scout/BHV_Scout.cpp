@@ -42,6 +42,7 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
   addInfoVars("RESCUE_REGION");
   addInfoVars("SCOUTED_SWIMMER");
   addInfoVars("SWIMMER_ALERT");
+  addInfoVars("NODE_REPORT");
 }
 
 //---------------------------------------------------------------
@@ -91,6 +92,27 @@ void BHV_Scout::onEveryState(string str)
   }
   if(alerts.size() > 0)
     postEventMessage("Swimmers known: " + uintToString(m_swimmers.size()));
+
+  // Track the teammate (rescue) vehicle from shared NODE_REPORT messages,
+  // so we can scout AWAY from where it goes (it rescues swimmers it passes).
+  bool ok_nr;
+  vector<string> reports = getBufferStringVector("NODE_REPORT", ok_nr);
+  for(unsigned int i=0; i<reports.size(); i++) {
+    string name;
+    if(!tokParse(reports[i], "NAME", ',', '=', name) || (name != m_tmate))
+      continue;
+    double mx, my;
+    bool okx = tokParse(reports[i], "X", ',', '=', mx);
+    bool oky = tokParse(reports[i], "Y", ',', '=', my);
+    if(okx && oky) {
+      // Sub-sample into a trail: only record once the mate has moved ~8m,
+      // so the trail stays compact over a long mission.
+      if(m_mate_trail.empty() ||
+         hypot(mx - m_mate_trail.back().get_vx(),
+               my - m_mate_trail.back().get_vy()) > 8.0)
+        m_mate_trail.push_back(XYPoint(mx, my));
+    }
+  }
 
   if(!getBufferVarUpdated("SCOUTED_SWIMMER"))
     return;
@@ -197,6 +219,7 @@ void BHV_Scout::updateScoutPoint()
     unsigned int num_candidates = 20;
     double       w_near         = 0.5;
     double       w_explore      = 0.5;
+    double       w_mate         = 1.0;
     double       best_score     = -1e9;
 
     for(unsigned int c=0; c<num_candidates; c++) {
@@ -223,8 +246,21 @@ void BHV_Scout::updateScoutPoint()
       }
       double explore = m_visited.empty() ? 0.0 : nearest_visited;
 
+      // distance from this candidate to the teammate's (rescue's) trail.
+      // Big => the rescue hasn't been there, so it's ours to cover.
+      double nearest_mate = 1e9;
+      for(unsigned int m=0; m<m_mate_trail.size(); m++) {
+        double dm = hypot(cx - m_mate_trail[m].get_vx(), cy - m_mate_trail[m].get_vy());
+        if(dm < nearest_mate)
+          nearest_mate = dm;
+      }
+      double mate_term = m_mate_trail.empty() ? 0.0 : nearest_mate;
+
       double dist_from_me = hypot(cx - m_osx, cy - m_osy);
-      double score = nearest - (w_near * dist_from_me) + (w_explore * explore);
+      double score = nearest
+                   - (w_near    * dist_from_me)
+                   + (w_explore * explore)
+                   + (w_mate    * mate_term);
 
       if(score > best_score) {
         best_score = score;

@@ -62,6 +62,9 @@ protected: // State variables
   // Scout points already reached - memory for systematic gap coverage.
   std::vector<XYPoint> m_visited;
 
+  // Teammate (rescue) trail from NODE_REPORT - scout the complement of it.
+  std::vector<XYPoint> m_mate_trail;
+
 protected: // Config variables
   double m_capture_radius;
   double m_desired_speed;
