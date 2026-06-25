@@ -54,6 +54,7 @@ class GenRescue : public AppCastingMOOSApp
   void planVori();               // vor + interception: within ours, grab the most-threatened first
   void planCen();                // centrality-weighted NN (bias toward remaining-centroid)
   void planAuc();                // auction/preemption: steal contested-winnable swimmers (bounded detour)
+  void planShadow();             // SHADOW: phase1=vori; once no swimmer is ours, trail the opponent SCOUT to harvest its finds (deviate only if we can return ahead of the opp rescue)
   void snakeOrder(double lane_h, bool near_start);  // shared boustrophedon builder
   void planSnkNear();            // snake that starts the sweep from the end nearest ownship
   void planSnkFine();            // snake with finer lanes (lane_h=6)
@@ -94,6 +95,15 @@ class GenRescue : public AppCastingMOOSApp
   double      m_opp_y;
   double      m_opp_hdg;          // opponent heading (deg, MOOS 0=N) from NODE_REPORT -- for dodge
   std::string m_opp_name;
+
+  // Opponent SCOUT position (TYPE=heron, not us, not our own scout). Used by the
+  // "shadow" strategy. m_our_scout_name is learned from the TEAMMATE_SCOUT message
+  // our own scout broadcasts, so we can tell the two herons apart.
+  std::string m_our_scout_name;
+  bool        m_opp_scout_set;
+  double      m_opp_scout_x;
+  double      m_opp_scout_y;
+  bool        m_shadowing;          // once we start trailing the opp scout, stay in shadow mode (sticky)
 
   // Periodic re-plan throttle. We re-issue the survey path every
   // m_replan_interval game-seconds while swimmers remain so the

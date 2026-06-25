@@ -40,6 +40,11 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
   m_lawn_index = 0;
   m_opp_known = false;
 
+  m_shadow_mode = false;        // default: cover-all (set shadow_mode=true to trail opp scout)
+  m_opp_scout_known = false;
+  m_opp_scout_x = 0; m_opp_scout_y = 0;
+  m_scout_shadowing = false;
+
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
   addInfoVars("SCOUTED_SWIMMER");
@@ -62,6 +67,8 @@ bool BHV_Scout::setParam(string param, string val)
     handled = setPosDoubleOnString(m_desired_speed, val);
   else if(param == "tmate")
     handled = setNonWhiteVarOnString(m_tmate, val);
+  else if(param == "shadow_mode")
+    handled = setBooleanOnString(m_shadow_mode, val);
   else
     handled = false;
 
@@ -75,6 +82,12 @@ bool BHV_Scout::setParam(string param, string val)
 
 void BHV_Scout::onEveryState(string str)
 {
+  // Tell our rescue teammate WHO we are, so it can tell OUR scout apart from
+  // the opponent's scout (both are TYPE=heron). The opponent scout is then the
+  // heron that is neither the rescue itself nor this named teammate scout.
+  if(m_tmate != "")
+    postOffboardMessage(m_tmate, "TEAMMATE_SCOUT", m_us_name);
+
   // Collect ALL registered swimmers from this cycle's SWIMMER_ALERT burst.
   // uFldRescueMgr posts ~11 of them at once every 15s; getBufferStringVector
   // returns the full vector (getBufferStringVal would give only the last one).
@@ -125,6 +138,12 @@ void BHV_Scout::onEveryState(string str)
         m_opp_x = rx;
         m_opp_y = ry;
         m_opp_known = true;
+      }
+      else if(vtype == "heron") {
+        // The other heron (not us, not our KAYAK rescue) = the opponent scout.
+        m_opp_scout_x = rx;
+        m_opp_scout_y = ry;
+        m_opp_scout_known = true;
       }
     }
   }
@@ -228,6 +247,23 @@ void BHV_Scout::updateScoutPoint()
     m_pty = ry;
     m_pt_set = true;
     return;
+  }
+
+  // SHADOW MODE: trail the OPPONENT scout so our own sensor copies its finds
+  // (revealing them to our rescue too -> denies the opponent exclusive hidden
+  // swimmers). Engage when it first comes within range, then stay locked on
+  // (sticky) -- same proximity+sticky logic as the rescue's shadow.
+  if(m_shadow_mode && m_opp_scout_known) {
+    double dd = hypot(m_opp_scout_x - m_osx, m_opp_scout_y - m_osy);
+    if(!m_scout_shadowing && dd <= 50.0)
+      m_scout_shadowing = true;
+    if(m_scout_shadowing) {
+      m_ptx = m_opp_scout_x;
+      m_pty = m_opp_scout_y;
+      m_pt_set = true;
+      postEventMessage("SHADOWING opp scout");
+      return;
+    }
   }
 
   // Scout EVERYWHERE. Our scout's discoveries are LOCATION-PRIVATE: the

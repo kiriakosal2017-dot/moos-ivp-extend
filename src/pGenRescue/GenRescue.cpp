@@ -35,14 +35,13 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  // Default = "champ1": the proven, frozen opponent-aware benchmark (beat the
-  // random/greedy/snake baselines in Lab 09), NOW with the opponent-tracking
-  // fix above (TYPE=KAYAK) so it compares against the real opponent rescue.
-  // We switch off "nn" (opponent-BLIND - it ceded contested swimmers and left
-  // us mid-table). The local -r2 harness could not give a clean read (warp 50
-  // overshoots, warp 3 times out), so this is a principled pick; the real
-  // judge is the course's overnight -rs2 tournament.
-  m_strategy = "champ1";
+  // Default = "vori": strict Voronoi partition (concedes swimmers the opponent
+  // is closer to, instead of clinging like champ1's steal-margin) PLUS aggressive
+  // threat interception (snipes the swimmer the opponent is racing for, when we
+  // can still reach it first). Chosen after watching GUI duels: vori cleanly
+  // divides the field and intercepts, while champ1's margin made the trailing
+  // boat just follow. Relies on the opponent-RESCUE tracking fix above (TYPE=KAYAK).
+  m_strategy = "vori";
                           // The real competition launches the two boats FAR APART, so
                           // there is NO early COLREGS -- the game reduces to "who collects
                           // their share fastest" = pure efficiency. nn's greedy tour is
@@ -63,6 +62,11 @@ GenRescue::GenRescue()
 
   m_opp_set = false;
   m_opp_x = 0; m_opp_y = 0; m_opp_hdg = 0;
+
+  m_our_scout_name = "";               // learned from TEAMMATE_SCOUT (shadow strategy)
+  m_opp_scout_set = false;
+  m_opp_scout_x = 0; m_opp_scout_y = 0;
+  m_shadowing = false;                 // becomes true (sticky) once we engage the shadow
 
   m_last_plan_time  = 0;
   m_replan_interval = 15;   // game-seconds between forced re-plans
@@ -98,6 +102,9 @@ bool GenRescue::OnNewMail(MOOSMSG_LIST &NewMail)
     }
     else if(key == "NODE_REPORT")
       handled = handleMailNodeReport(sval);
+    else if(key == "TEAMMATE_SCOUT")
+      m_our_scout_name = sval;   // our scout announces its name -> lets us tell
+                                 // OUR scout apart from the opponent's scout.
 
     else if(key != "APPCAST_REQ") // handle by AppCastingMOOSApp
       handled = false;
@@ -195,6 +202,7 @@ void GenRescue::RegisterVariables()
   Register("NAV_X", 0);
   Register("NAV_Y", 0);
   Register("NODE_REPORT", 0);
+  Register("TEAMMATE_SCOUT", 0);   // our scout announces its name (shadow strategy)
 }
 
 
@@ -297,12 +305,18 @@ bool GenRescue::handleMailNodeReport(string str)
   // silently broke every opponent-aware strategy (vor/vori/claim/skip/dodge).
   string vtype;
   tokParse(str, "TYPE", ',', '=', vtype);
-  if(vtype != "KAYAK")
-    return(true);
-  m_opp_name = name; m_opp_x = x; m_opp_y = y; m_opp_set = true;
-  double hdg = 0;       // opponent heading (for dodge); keep last value if absent
-  if(tokParse(str, "HDG", ',', '=', hdg))
-    m_opp_hdg = hdg;
+  if(vtype == "KAYAK") {
+    // The opponent RESCUE (the other KAYAK).
+    m_opp_name = name; m_opp_x = x; m_opp_y = y; m_opp_set = true;
+    double hdg = 0;     // opponent heading (for dodge); keep last value if absent
+    if(tokParse(str, "HDG", ',', '=', hdg))
+      m_opp_hdg = hdg;
+  }
+  else if(vtype == "heron" && m_our_scout_name != "" && name != m_our_scout_name) {
+    // A scout (heron) that is NOT our own teammate scout => the opponent SCOUT.
+    // The "shadow" strategy trails it to steal the swimmers it discovers.
+    m_opp_scout_x = x; m_opp_scout_y = y; m_opp_scout_set = true;
+  }
   return(true);
 }
 
@@ -326,6 +340,7 @@ void GenRescue::planPath()
   else if(m_strategy == "vor")    planVor();
   else if(m_strategy == "vorx")   planVorx();
   else if(m_strategy == "vori")   planVori();
+  else if(m_strategy == "shadow") planShadow();
   else if(m_strategy == "cen")    planCen();
   else if(m_strategy == "auc")    planAuc();
   else if(m_strategy == "snk_near") planSnkNear();
@@ -677,7 +692,7 @@ void GenRescue::planVorx()  // vor with a generous claim margin (contest the mid
 
 void GenRescue::planVori()  // vor + interception: within ours, grab most-threatened first (bounded detour)
 {
-  const double THREAT = 40.0, STEAL_FACTOR = 1.3;
+  const double THREAT = 60.0, STEAL_FACTOR = 1.6;   // more aggressive intercept: snipe threatened swimmers from farther + accept a bigger detour
   std::vector<XYPoint> ours, theirs;
   for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
     if(m_opp_set) {
@@ -709,6 +724,81 @@ void GenRescue::planVori()  // vor + interception: within ours, grab most-threat
     for(size_t i=0;i<theirs.size();i++){ double d=hypot(theirs[i].x()-cx,theirs[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
     cx=theirs[bi].x(); cy=theirs[bi].y(); path.add_vertex(cx,cy); theirs.erase(theirs.begin()+bi);
   }
+  postPath(path);
+}
+
+void GenRescue::planShadow()
+{
+  // ---- PHASE 1 ---------------------------------------------------------------
+  // While ANY known swimmer is "ours" (we are closer than the opponent RESCUE),
+  // behave exactly like vori: claim + intercept our share first.
+  int ours_count = 0;
+  if(m_opp_set) {
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++) {
+      double ud = hypot(p->second.x()-m_nav_x, p->second.y()-m_nav_y);
+      double od = hypot(p->second.x()-m_opp_x, p->second.y()-m_opp_y);
+      if(ud <= od) ours_count++;
+    }
+  } else
+    ours_count = (int) m_swimmers.size();   // no opponent rescue seen -> all ours
+  if(ours_count > 0) { planVori(); return; }
+
+  // ---- PHASE 2 ---------------------------------------------------------------
+  // No swimmer is ours. SHADOW the opponent scout (deb) -- but ONLY when it is a
+  // GOOD opportunity. If the opp scout is unknown or FAR, chasing it across the
+  // map just wastes travel and drags the game (we measured a 605s game); stay
+  // productive instead and mop up the nearest remaining swimmer.
+  const double SHADOW_MAX = 50.0;   // distance at which we first ENGAGE the shadow
+  double cx = m_nav_x, cy = m_nav_y;
+  XYSegList path;
+  double debx = m_opp_scout_x, deby = m_opp_scout_y;
+  double d_to_deb = m_opp_scout_set ? hypot(m_nav_x-debx, m_nav_y-deby) : 1e9;
+
+  // Engage once the opp scout first comes within range; once engaged, STAY
+  // shadowing it from then on (sticky) even if it later drifts past SHADOW_MAX.
+  if(!m_shadowing && m_opp_scout_set && d_to_deb <= SHADOW_MAX)
+    m_shadowing = true;
+
+  if(!m_shadowing || !m_opp_scout_set) {
+    std::vector<XYPoint> rem;
+    for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+      rem.push_back(p->second);
+    while(!rem.empty()){
+      size_t bi=0; double bd=-1;
+      for(size_t i=0;i<rem.size();i++){ double d=hypot(rem[i].x()-cx,rem[i].y()-cy); if(bd<0||d<bd){bd=d;bi=i;} }
+      cx=rem[bi].x(); cy=rem[bi].y(); path.add_vertex(cx,cy); rem.erase(rem.begin()+bi);
+    }
+    postPath(path);
+    return;
+  }
+
+  // Opp scout is CLOSE -> shadow it. Trail it so we auto-rescue (within ~5m) the
+  // swimmers it discovers, before the opponent rescue can detour to them. Its
+  // finds have PRIVATE locations, so we harvest them purely by passing through.
+  double cal_d_deb = m_opp_set ? hypot(m_opp_x-debx, m_opp_y-deby) : 1e9;
+
+  // DEVIATION RULE: en route, opportunistically grab any KNOWN swimmer we can
+  // reach before the opponent rescue AND still beat that rescue to the scout
+  // afterwards (i.e. we can "return ahead" of the opp rescue). Otherwise skip it.
+  std::vector<XYPoint> rem;
+  for(std::map<int,XYPoint>::iterator p = m_swimmers.begin(); p != m_swimmers.end(); p++)
+    rem.push_back(p->second);
+  while(!rem.empty()){
+    int best = -1; double bestd = -1;
+    for(size_t i=0;i<rem.size();i++){
+      double d_cur_s = hypot(rem[i].x()-cx,      rem[i].y()-cy);       // our cost to s
+      double d_cal_s = m_opp_set ? hypot(rem[i].x()-m_opp_x, rem[i].y()-m_opp_y) : 1e9; // opp rescue to s
+      double d_s_deb = hypot(rem[i].x()-debx,    rem[i].y()-deby);     // s onward to the scout
+      if(d_cur_s < d_cal_s && (d_cur_s + d_s_deb) < cal_d_deb){
+        if(best < 0 || d_cur_s < bestd){ best = (int) i; bestd = d_cur_s; }
+      }
+    }
+    if(best < 0) break;
+    cx=rem[best].x(); cy=rem[best].y(); path.add_vertex(cx,cy); rem.erase(rem.begin()+best);
+  }
+  // Finally head to the opponent scout. Periodic re-planning (m_replan_interval)
+  // re-issues this toward deb's latest position, so we continuously trail it.
+  path.add_vertex(debx, deby);
   postPath(path);
 }
 

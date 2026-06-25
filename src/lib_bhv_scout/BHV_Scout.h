@@ -77,9 +77,17 @@ protected: // State variables
   double m_opp_y;
   bool   m_opp_known;
 
+  // Opponent SCOUT (the other heron). Tracked for shadow_mode: trail it so our
+  // own sensor copies its discoveries. m_scout_shadowing is sticky once engaged.
+  double m_opp_scout_x;
+  double m_opp_scout_y;
+  bool   m_opp_scout_known;
+  bool   m_scout_shadowing;
+
 protected: // Config variables
   double m_capture_radius;
   double m_desired_speed;
+  bool   m_shadow_mode;          // if true: trail the opponent scout instead of cover-all
 
   std::string m_tmate;
 };

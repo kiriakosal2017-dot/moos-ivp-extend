@@ -33,7 +33,7 @@ WAIT=$(( 950 / WARP + 30 ))
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/scout_results_${LABEL}.txt"
-echo "# run rescued" > "$OUT"
+echo "# run scouted (hidden swimmers discovered by the scout)" > "$OUT"
 
 echo "================================================"
 echo " Scout evaluation suite"
@@ -44,21 +44,37 @@ echo "================================================"
 
 cd "$MISSION_DIR" || { echo "ERROR: cannot cd to mission dir"; exit 1; }
 
+# Robust teardown: kill ALL mission processes hard (mykill can miss the
+# backgrounded pAntler children), then WAIT until every MOOSDB is gone so the
+# ports are actually free before the next launch.
+teardown() {
+  mykill.sh          >/dev/null 2>&1
+  pkill -9 -f targ_  >/dev/null 2>&1
+  pkill -9 -x MOOSDB >/dev/null 2>&1
+  pkill -9 -x pShare >/dev/null 2>&1
+  for w in $(seq 1 25); do
+    pgrep -x MOOSDB >/dev/null 2>&1 || break
+    sleep 1
+  done
+  sleep 3
+}
+
+teardown   # clean slate before we start
+
 total=0
 ok_runs=0
-for i in $(seq 1 "$RUNS"); do
-  echo "--- Run $i / $RUNS ---"
+attempt=0
+max_attempts=$(( RUNS * 3 ))
+while [ "$ok_runs" -lt "$RUNS" ] && [ "$attempt" -lt "$max_attempts" ]; do
+  attempt=$(( attempt + 1 ))
+  echo "--- attempt $attempt   (valid so far: $ok_runs/$RUNS) ---"
   ./clean.sh >/dev/null 2>&1
 
-  # Launch headless (-x skips the uMAC console, --nogui skips pMarineViewer).
-  # Fresh random swimmers each run via --swimmers / --unreg.
+  # Launch headless (-x skips uMAC, --nogui skips pMarineViewer), fresh swimmers.
   ./launch.sh -rs1 -x --nogui --swimmers=$SWIMMERS --unreg=$UNREG "$WARP" >/dev/null 2>&1
   echo "    launched headless; waiting ${WAIT}s for the game to finish ..."
   sleep "$WAIT"
-
-  # Tear down all MOOS processes before the next run frees the ports.
-  mykill.sh >/dev/null 2>&1
-  sleep 3
+  teardown
 
   # Locate this run's shoreside alog (timestamped dir, or top-level file).
   alogfile=$(ls -t XLOG_SHORESIDE_*/XLOG_SHORESIDE_*.alog 2>/dev/null | head -1)
@@ -66,22 +82,33 @@ for i in $(seq 1 "$RUNS"); do
     alogfile=$(ls -t XLOG_SHORESIDE_*.alog 2>/dev/null | head -1)
   fi
   if [ -z "$alogfile" ]; then
-    echo "    !! no shoreside .alog found - the launch probably failed"
-    echo "$i NA" >> "$OUT"
+    echo "    !! no shoreside .alog found - launch failed; RETRYING"
     continue
   fi
 
-  # Metric: distinct swimmers rescued by the team this run.
-  rescued=$(grep RESCUED_SWIMMER "$alogfile" | grep -o 'id=[0-9]*' | sort -u | wc -l | tr -d ' ')
-  echo "    rescued = $rescued   (alog: $alogfile)"
-  echo "$i $rescued" >> "$OUT"
-  total=$(( total + rescued ))
+  # PRIMARY metric: distinct UNREGISTERED swimmers the SCOUT discovered.
+  scouted=$(grep SCOUTED_SWIMMER "$alogfile" | grep -o 'id=[0-9]*' | sort -u | wc -l | tr -d ' ')
+  rescued=$(grep RESCUED_SWIMMER  "$alogfile" | grep -o 'id=[0-9]*' | sort -u | wc -l | tr -d ' ')
+
+  # scouted==0 almost always means the mission never really ran -> RETRY.
+  if [ "$scouted" -eq 0 ]; then
+    echo "    scouted=0 (rescued=$rescued) => mission failed to run; RETRYING"
+    continue
+  fi
+
   ok_runs=$(( ok_runs + 1 ))
+  echo "    scouted = $scouted / $UNREG    (rescued = $rescued)   [VALID $ok_runs/$RUNS]"
+  echo "$ok_runs $scouted" >> "$OUT"
+  total=$(( total + scouted ))
 done
+
+if [ "$ok_runs" -lt "$RUNS" ]; then
+  echo "!! Only $ok_runs/$RUNS valid runs after $attempt attempts (launches kept failing)."
+fi
 
 echo "================================================"
 if [ "$ok_runs" -gt 0 ]; then
-  awk -v t="$total" -v r="$ok_runs" 'BEGIN{ printf " Avg rescued over %d valid runs: %.2f\n", r, t/r }'
+  awk -v t="$total" -v r="$ok_runs" -v u="$UNREG" 'BEGIN{ printf " Avg SCOUTED %.2f / %s hidden  (over %d valid runs)\n", t/r, u, r }'
 else
   echo " No valid runs - try one launch by hand (with the GUI) to see the error."
 fi
