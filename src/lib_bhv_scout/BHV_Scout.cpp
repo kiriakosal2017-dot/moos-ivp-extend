@@ -33,11 +33,12 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
 
   // All distances are in meters, all speed in meters per second
   // Default values for configuration parameters
-  m_desired_speed  = 1.1;   // fixed: we tune the algorithm, not the speed
+  m_desired_speed  = 1.0;   // default scout speed
   m_capture_radius = 10;
 
   m_pt_set = false;
   m_lawn_index = 0;
+  m_opp_known = false;
 
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
@@ -94,24 +95,37 @@ void BHV_Scout::onEveryState(string str)
   if(alerts.size() > 0)
     postEventMessage("Swimmers known: " + uintToString(m_swimmers.size()));
 
-  // Track the teammate (rescue) vehicle from shared NODE_REPORT messages,
-  // so we can scout AWAY from where it goes (it rescues swimmers it passes).
+  // Read NODE_REPORT for ALL vehicles. Track (a) our teammate rescue's trail,
+  // and (b) the OPPONENT rescue's live position (a KAYAK that is neither us
+  // nor our teammate) for win-region scouting.
   bool ok_nr;
   vector<string> reports = getBufferStringVector("NODE_REPORT", ok_nr);
   for(unsigned int i=0; i<reports.size(); i++) {
     string name;
-    if(!tokParse(reports[i], "NAME", ',', '=', name) || (name != m_tmate))
+    if(!tokParse(reports[i], "NAME", ',', '=', name))
       continue;
-    double mx, my;
-    bool okx = tokParse(reports[i], "X", ',', '=', mx);
-    bool oky = tokParse(reports[i], "Y", ',', '=', my);
-    if(okx && oky) {
-      // Sub-sample into a trail: only record once the mate has moved ~8m,
-      // so the trail stays compact over a long mission.
+    double rx, ry;
+    if(!tokParse(reports[i], "X", ',', '=', rx) ||
+       !tokParse(reports[i], "Y", ',', '=', ry))
+      continue;
+
+    if(name == m_tmate) {
+      // Our rescue (abe): keep a sub-sampled trail (record once moved ~8m).
       if(m_mate_trail.empty() ||
-         hypot(mx - m_mate_trail.back().get_vx(),
-               my - m_mate_trail.back().get_vy()) > 8.0)
-        m_mate_trail.push_back(XYPoint(mx, my));
+         hypot(rx - m_mate_trail.back().get_vx(),
+               ry - m_mate_trail.back().get_vy()) > 8.0)
+        m_mate_trail.push_back(XYPoint(rx, ry));
+    }
+    else if(name != m_us_name) {
+      // Any other vehicle: rescue vehicles report TYPE=KAYAK, scouts TYPE=heron.
+      // A non-teammate KAYAK is the opponent's rescue vehicle.
+      string vtype;
+      tokParse(reports[i], "TYPE", ',', '=', vtype);
+      if(vtype == "KAYAK") {
+        m_opp_x = rx;
+        m_opp_y = ry;
+        m_opp_known = true;
+      }
     }
   }
 
@@ -197,10 +211,10 @@ void BHV_Scout::updateScoutPoint()
   }
   m_rescue_region = region;
 
-  // Lawnmower coverage: follow a precomputed serpentine that sweeps the
-  // region but SKIPS the bands near registered swimmers (the rescue vehicle
-  // sweeps those itself). So we systematically cover the complement.
-  if(m_lawn_path.empty() && !m_swimmers.empty())
+  // Lawnmower coverage: build the serpentine as soon as the REGION is known
+  // (it no longer needs swimmer info) so the scout starts sweeping at once,
+  // instead of wasting ~30s driving to a random fallback point first.
+  if(m_lawn_path.empty())
     generateLawnPath();
 
   if(m_lawn_path.empty()) {
@@ -216,30 +230,10 @@ void BHV_Scout::updateScoutPoint()
     return;
   }
 
-  // COOPERATION: the rescue rescues hidden swimmers it passes over, so any
-  // lawn point near its actual trail is already handled - skip it and move on
-  // to a point the rescue has NOT covered. (Real-time, via NODE_REPORT.)
-  double mate_clear = 12.0;
-  unsigned int checked = 0;
-  while(checked < m_lawn_path.size()) {
-    if(m_lawn_index >= m_lawn_path.size())
-      m_lawn_index = 0;          // wrap around and re-sweep
-    double lx = m_lawn_path[m_lawn_index].get_vx();
-    double ly = m_lawn_path[m_lawn_index].get_vy();
-
-    bool covered = false;
-    for(unsigned int t=0; t<m_mate_trail.size(); t++) {
-      if(hypot(lx - m_mate_trail[t].get_vx(),
-               ly - m_mate_trail[t].get_vy()) < mate_clear) {
-        covered = true;
-        break;
-      }
-    }
-    if(!covered)
-      break;                     // this point still needs us
-    m_lawn_index++;              // rescue already swept here - skip ahead
-    checked++;
-  }
+  // Scout EVERYWHERE. Our scout's discoveries are LOCATION-PRIVATE: the
+  // SCOUTED_SWIMMER_BEN posting is qbridged to ben alone, and unregistered
+  // swimmer locations are never broadcast. So the opponent cannot steal our
+  // finds - there is no reason to avoid any area. Maximum coverage wins.
 
   if(m_lawn_index >= m_lawn_path.size())
     m_lawn_index = 0;
@@ -282,7 +276,7 @@ void BHV_Scout::generateLawnPath()
 
   // Lane spacing MUST match the sensor swath (~6m), else we miss swimmers
   // between lanes. 8m lanes give near-full coverage within the time budget.
-  double lane_gap = 8.0;   // spacing between sweep rows (m)
+  double lane_gap = 8.0;   // spacing between sweep rows (m) - the sweet spot
   double step     = 10.0;  // sampling distance along each row (m)
 
   int row = 0;

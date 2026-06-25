@@ -35,7 +35,14 @@ GenRescue::GenRescue()
 
   m_plan_pending  = false;
   m_rescued_count = 0;
-  m_strategy = "nn";      // DEFAULT = efficient nearest-neighbour collector + MAX SPEED.
+  // Default = "champ1": the proven, frozen opponent-aware benchmark (beat the
+  // random/greedy/snake baselines in Lab 09), NOW with the opponent-tracking
+  // fix above (TYPE=KAYAK) so it compares against the real opponent rescue.
+  // We switch off "nn" (opponent-BLIND - it ceded contested swimmers and left
+  // us mid-table). The local -r2 harness could not give a clean read (warp 50
+  // overshoots, warp 3 times out), so this is a principled pick; the real
+  // judge is the course's overnight -rs2 tournament.
+  m_strategy = "champ1";
                           // The real competition launches the two boats FAR APART, so
                           // there is NO early COLREGS -- the game reduces to "who collects
                           // their share fastest" = pure efficiency. nn's greedy tour is
@@ -50,7 +57,7 @@ GenRescue::GenRescue()
   m_cur_target_id = -1;   // dev: no committed target yet
   m_adapt_mode = -1;      // adapt: mode decided+locked on first confident plan
   m_snk_dir = -1; m_snk_xflip = 0;     // snk_rand: orientation chosen on first plan
-  m_transit_speed = 1.25;              // posted in SURVEY_UPDATE (helm domain allows up to 1.6; 1.6 drove the real boat ~2.7 m/s -> overshoot, so dialed back to 1.25)
+  m_transit_speed = 1.2;               // default rescue transit speed
   m_crs_spd_ratio = 0;                 // 0 = don't override bhv's crs_spd_zaic_ratio (85); >0 = post it
   srand((unsigned) getpid());          // distinct RNG per match process
 
@@ -283,6 +290,14 @@ bool GenRescue::handleMailNodeReport(string str)
   if(!ok_n || !ok_x || !ok_y)
     return(false);
   if(name == m_vname)   // ignore our own relayed report
+    return(true);
+  // Track ONLY the opponent RESCUE. Rescue vehicles report TYPE=KAYAK, scouts
+  // report TYPE=heron. Without this filter, m_opp was overwritten by ANY
+  // contact - our own scout, the opponent scout - whoever reported last, which
+  // silently broke every opponent-aware strategy (vor/vori/claim/skip/dodge).
+  string vtype;
+  tokParse(str, "TYPE", ',', '=', vtype);
+  if(vtype != "KAYAK")
     return(true);
   m_opp_name = name; m_opp_x = x; m_opp_y = y; m_opp_set = true;
   double hdg = 0;       // opponent heading (for dodge); keep last value if absent

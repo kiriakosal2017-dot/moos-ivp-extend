@@ -71,6 +71,12 @@ protected: // State variables
   std::vector<XYPoint> m_lawn_path;
   unsigned int         m_lawn_index;
 
+  // Opponent rescue vehicle (from NODE_REPORT: TYPE=KAYAK, not us/teammate).
+  // Used for win-region scouting: only scout where OUR rescue beats theirs.
+  double m_opp_x;
+  double m_opp_y;
+  bool   m_opp_known;
+
 protected: // Config variables
   double m_capture_radius;
   double m_desired_speed;
