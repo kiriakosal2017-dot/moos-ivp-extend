@@ -26,6 +26,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <set>
 #include "IvPBehavior.h"
 #include "XYPoint.h"
 #include "XYPolygon.h"
@@ -46,6 +47,10 @@ protected:
   void         generateLawnPath();
   bool         lawnAccept(double x, double y);
   void         postViewPoint(bool viewable=true);
+  // Tile-coverage memory: skip lawn points the rescue has already swept (<=5m).
+  long         tileKey(double x, double y);
+  void         markRescueCovered(double rx, double ry);
+  bool         tileCovered(double x, double y);
 
 protected: // State variables
   double   m_osx;
@@ -84,10 +89,17 @@ protected: // State variables
   bool   m_opp_scout_known;
   bool   m_scout_shadowing;
 
+  // Tile-coverage memory: tile keys the rescue has swept (came within 5m). When
+  // tile_avoid is on, the scout skips lawn points in these tiles (no point
+  // searching where the rescue already auto-rescued).
+  std::set<long> m_covered_tiles;
+  double         m_tile_size;
+
 protected: // Config variables
   double m_capture_radius;
   double m_desired_speed;
   bool   m_shadow_mode;          // if true: trail the opponent scout instead of cover-all
+  bool   m_tile_avoid;           // if true: skip lawn points the rescue already swept (<=5m)
 
   std::string m_tmate;
 };

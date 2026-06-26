@@ -45,6 +45,9 @@ BHV_Scout::BHV_Scout(IvPDomain gdomain) :
   m_opp_scout_x = 0; m_opp_scout_y = 0;
   m_scout_shadowing = false;
 
+  m_tile_avoid = true;          // DEFAULT ON: skip tiles the rescue already swept (tested ~5.0 SCOUTED vs ~3.5 cover-all)
+  m_tile_size  = 5.0;           // tile edge (m); rescue auto-rescue radius is ~5m
+
   addInfoVars("NAV_X, NAV_Y");
   addInfoVars("RESCUE_REGION");
   addInfoVars("SCOUTED_SWIMMER");
@@ -69,6 +72,8 @@ bool BHV_Scout::setParam(string param, string val)
     handled = setNonWhiteVarOnString(m_tmate, val);
   else if(param == "shadow_mode")
     handled = setBooleanOnString(m_shadow_mode, val);
+  else if(param == "tile_avoid")
+    handled = setBooleanOnString(m_tile_avoid, val);
   else
     handled = false;
 
@@ -128,6 +133,9 @@ void BHV_Scout::onEveryState(string str)
          hypot(rx - m_mate_trail.back().get_vx(),
                ry - m_mate_trail.back().get_vy()) > 8.0)
         m_mate_trail.push_back(XYPoint(rx, ry));
+      // Tile-coverage memory: mark every tile the rescue sweeps within 5m as
+      // covered (done on EVERY report, not the sub-sampled trail, for full coverage).
+      markRescueCovered(rx, ry);
     }
     else if(name != m_us_name) {
       // Any other vehicle: rescue vehicles report TYPE=KAYAK, scouts TYPE=heron.
@@ -274,12 +282,54 @@ void BHV_Scout::updateScoutPoint()
   if(m_lawn_index >= m_lawn_path.size())
     m_lawn_index = 0;
 
+  // tile_avoid: skip lawn points whose tile the rescue already swept (within 5m).
+  // Advance through the serpentine, skipping covered points; if EVERYTHING is
+  // covered (full loop), fall through and keep the current point.
+  if(m_tile_avoid) {
+    unsigned int tries = 0;
+    while(tries < m_lawn_path.size() &&
+          tileCovered(m_lawn_path[m_lawn_index].get_vx(),
+                      m_lawn_path[m_lawn_index].get_vy())) {
+      m_lawn_index++;
+      if(m_lawn_index >= m_lawn_path.size())
+        m_lawn_index = 0;
+      tries++;
+    }
+  }
+
   m_ptx = m_lawn_path[m_lawn_index].get_vx();
   m_pty = m_lawn_path[m_lawn_index].get_vy();
   m_lawn_index++;
   m_pt_set = true;
   postEventMessage("Lawn " + uintToString(m_lawn_index) + "/" +
                    uintToString((unsigned int)m_lawn_path.size()));
+}
+
+//-----------------------------------------------------------
+// Tile-coverage helpers. Absolute grid of m_tile_size cells, keyed by a packed
+// (col,row). The +100000 offset keeps the key positive over the field's
+// negative coordinates.
+
+long BHV_Scout::tileKey(double x, double y)
+{
+  long cx = (long)floor(x / m_tile_size) + 100000L;
+  long cy = (long)floor(y / m_tile_size) + 100000L;
+  return cx * 1000000L + cy;
+}
+
+void BHV_Scout::markRescueCovered(double rx, double ry)
+{
+  // Mark every tile within ~5m of the rescue (its auto-rescue radius) as swept.
+  const double R = 5.0;
+  for(double dx = -R; dx <= R; dx += m_tile_size/2.0)
+    for(double dy = -R; dy <= R; dy += m_tile_size/2.0)
+      if(hypot(dx, dy) <= R)
+        m_covered_tiles.insert(tileKey(rx + dx, ry + dy));
+}
+
+bool BHV_Scout::tileCovered(double x, double y)
+{
+  return m_covered_tiles.count(tileKey(x, y)) > 0;
 }
 
 //-----------------------------------------------------------
